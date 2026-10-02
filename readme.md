@@ -44,6 +44,8 @@ Only the session’s private **owner key** can change settings. New sessions sav
 
 For sessions created before this feature, or after losing browser storage, first access the session to initialize its owner key. On the LAN host, read `ownerToken` from the corresponding `data/<session-id>.json` file and paste it into Access’s owner-key field. The dialog identifies the file. Treat that key as private; recovered keys are saved only after validation. Back up the host’s session files to preserve settings and owner credentials.
 
+New browser profiles receive a random default name such as `GuiltyPride0239`, saved for future visits. Change it using **Your name**. Existing custom names are preserved; the old default “You” is replaced on the next visit. Generated names are display labels, not unique or authenticated accounts.
+
 ## Appearance
 
 The app automatically follows your system’s light or dark theme, including the editor, file panel, dialogs, and native controls. Changes to the system theme apply without reloading. The Markdown editor expands to display the entire document; long documents scroll with the page rather than inside the editor.

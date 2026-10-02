@@ -1,3 +1,4 @@
+import { generateUsername, initializeUsername } from './usernames.js';
 import { Document } from './crdt.js';
 import { attachVimControls } from './vim.js';
 import { attachVimCursor } from './vim-cursor.js';
@@ -13,12 +14,13 @@ const actor = uuid();
 const KEY = 'docdoc.documents.v1';
 let user, records = [], current, doc, history = [], syncing = false, generation = 0, composing = false;
 const notice = message => { $('notice').textContent = message; $('notice').hidden = !message; };
+$('name').value = generateUsername();
 try {
   user = localStorage.getItem('docdoc.user') || uuid();
   localStorage.setItem('docdoc.user', user);
   records = JSON.parse(localStorage.getItem(KEY) || '[]');
   if (!Array.isArray(records)) throw new Error('Invalid local document list');
-  $('name').value = localStorage.getItem('docdoc.name') || 'You';
+  $('name').value = initializeUsername(localStorage);
 } catch {
   user = uuid();
   notice('Browser storage is unavailable or unreadable. Export your work before closing this page.');
@@ -122,7 +124,7 @@ async function sync() {
     selectedDoc.merge(result.state); refresh(); persist();
     $('connection').textContent = 'Live on your local network';
     $('connection-dot').classList.remove('offline');
-    $('people').textContent = `${result.users.map(person => person.id === user ? 'You' : person.name).join(', ')} · ${result.users.length} / 5`;
+    $('people').textContent = `${result.users.map(person => person.id === user ? `${person.name} (you)` : person.name).join(', ')} · ${result.users.length} / 5`;
     notice('');
   } catch (error) {
     if (version !== generation) return;
