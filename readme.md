@@ -19,6 +19,37 @@ npm test      # CRDT and server request-handler integration tests
 npm run check # JavaScript syntax checks
 ```
 
+## Run with Docker at boot (Linux)
+
+The Docker package uses host networking to retain LAN connection IPs and MAC lookup behavior. Install Docker Engine and Docker Compose, then run these commands from the repository directory:
+
+```sh
+mkdir -p data
+docker compose up -d --build
+```
+
+Open **http://localhost:3000** or `http://<host-LAN-IP>:3000`. Existing snapshots and shared files remain in `./data`, mounted into the container; back up this directory. The container runs as UID/GID 1000 by default. If the data directory belongs to a different user, start with `DOCDOC_UID=$(id -u) DOCDOC_GID=$(id -g) docker compose up -d --build`.
+
+If Docker reports a bridge-network `veth` error, use this Compose configuration rather than starting the image with a plain `docker run`. Both the build and running container use host networking to avoid bridge interfaces. Recreate the service with `docker compose up -d --build --force-recreate`. For a manual launch, include `--network host`; port publishing (`-p`) is unnecessary with host networking.
+
+Enable Docker's system service so the container returns after a reboot:
+
+```sh
+sudo systemctl enable --now docker
+```
+
+The `unless-stopped` restart policy starts the container when Docker starts, unless you deliberately stopped it. These commands manage the instance:
+
+```sh
+docker compose start         # Start an existing stopped instance
+docker compose stop          # Stop it, including automatic boot startup
+docker compose logs -f       # Follow application logs
+docker compose ps            # View status and health
+docker compose up -d --build # Rebuild and run after application changes
+```
+
+To use another port, run `DOCDOC_PORT=8080 docker compose up -d`. Use the same port override when recreating the container. Host networking makes the configured port available directly on the Linux host; choose an unused port. Docker's health check reports whether the application responds; the restart policy restarts exited processes rather than unhealthy containers.
+
 ## Use the workspace
 
 - Create and rename documents from the sidebar; search by title.

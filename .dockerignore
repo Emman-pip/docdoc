@@ -1,0 +1,11 @@
+.git
+.agents
+.codex
+.aws
+data
+node_modules
+coverage
+tests
+docs
+*.bundle
+*.log

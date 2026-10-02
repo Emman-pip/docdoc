@@ -1,0 +1,17 @@
+services:
+  docdoc:
+    build:
+      context: .
+      network: host
+    image: docdoc:local
+    container_name: docdoc
+    restart: unless-stopped
+    init: true
+    # Linux host networking preserves peer IPs and the host's LAN ARP view.
+    network_mode: host
+    user: "${DOCDOC_UID:-1000}:${DOCDOC_GID:-1000}"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "${DOCDOC_PORT:-3000}"
+    volumes:
+      - ./data:/app/data
