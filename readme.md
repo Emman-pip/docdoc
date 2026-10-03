@@ -92,9 +92,9 @@ Large transfers stream through `data/files/<session-id>/` on the bind mount. All
 ## Use the workspace
 
 - Create and rename documents from the sidebar; search by title.
-- Write Markdown with heading, bold, italic, list, and quote shortcuts; toggle Preview to read the result.
+- Write Markdown with heading, bold, italic, list, quote, pipe tables, and triple-backtick fenced code blocks; toggle Preview to read the result. Tables support column alignment markers. Code blocks preserve whitespace, show an optional language label, and display unfinished fences through the end of the document.
 - Changes autosave in this browser. Export a `.md` file for a portable backup, including embedded photos.
-- Enter your display name, select **Share document**, and copy the short invitation link or its code, such as `xyz-jnk-dvc`. Use the host’s LAN address instead of localhost when inviting another device.
+- Enter your display name and select **Share document** to show a QR code, short invitation link, and code, such as `xyz-jnk-dvc`. Scan the QR code or copy the link/code; use the host’s LAN address instead of localhost when inviting another device. QR generation is bundled with DocDoc and works without an external service.
 - Open the invitation link, or select **Join with code** on the same LAN host and enter the code. Codes persist across host restarts; existing long invitation links still work.
 - Joined documents open in **Preview**, including when reopened from the sidebar. Select **Edit** to write. Locally created documents start in editing mode.
 - Anyone with the document invitation link or code can edit unless an enabled session whitelist blocks their connection. Keep invitations within your intended group.
@@ -203,11 +203,11 @@ A service worker caches the application after the first visit on **localhost or 
 
 ## Architecture and project structure
 
-- `public/`: responsive browser UI, editor, optional Vim bindings, photo processing and preview, character CRDT, and offline cache worker.
+- `public/`: responsive browser UI, editor, optional Vim bindings, photo processing and preview, character CRDT, bundled QR generator, and offline cache worker.
 - `src/server.js`: Node HTTP server, invitation checks, participant admission, synchronization, and atomic snapshot persistence.
 - `public/policy.js` and `src/access-control.js`: shared policy validation, peer-address matching, and Linux ARP-based MAC detection.
 - `src/file-sharing.js`, `src/folders.js`, and `src/zip.js`: streaming transfers, quota reservations, deletion, hierarchy checks, and ZIP generation.
-- `public/icons.svg`: bundled icon assets; `public/focus.js` and `public/defaults.js`: focused views and browser access templates.
+- `public/icons.svg`: bundled icon assets; `public/qrcode-generator.mjs` and its MIT license: local QR generation; `public/focus.js` and `public/defaults.js`: focused views and browser access templates.
 - `scripts/`: syntax checks and isolated Chromium smoke verification; `docs/screenshots/`: UI validation artifacts.
 - `tests/`: concurrent-edit convergence, duplicate/reordered delivery, authorization, five-user capacity, reconnection, and restart persistence checks. Server tests invoke the real request listener without opening TCP sockets.
 - `docs/application-plan.md`: product scope and delivery plan.
@@ -218,6 +218,6 @@ The CRDT merges immutable character insertions and deletion tombstones; document
 
 ## Current scope
 
-This is a text-document MVP with basic Markdown formatting, not full Word or Excel compatibility. Spreadsheets, view-only permissions, document-invitation revocation, host migration, and authenticated accounts are future work. Invitation links and short codes act as edit credentials; identities are browser-generated rather than authenticated accounts. The host enforces five distinct presented user identities, not verified people.
+This is a text-document MVP with basic Markdown formatting, not full Word or Excel compatibility. Preview renders headings, emphasis, lists, quotes, pipe tables, local photos, and escaped fenced code blocks; syntax highlighting is not included. Spreadsheets, view-only permissions, document-invitation revocation, host migration, and authenticated accounts are future work. Invitation links and short codes act as edit credentials; identities are browser-generated rather than authenticated accounts. The host enforces five distinct presented user identities, not verified people.
 
 Synchronization accepts up to 2 MB of serialized CRDT state, including edit history. This version is intended for small documents; export a backup if storage or sync limits are reached. Undo reverses local text edits; it does not provide a full document revision history. Markdown preview supports a small formatting subset and uploaded raster photos; it does not render arbitrary HTML or fetch external Markdown images.

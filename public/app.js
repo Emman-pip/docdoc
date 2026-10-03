@@ -10,6 +10,7 @@ import { attachEditorSize } from './editor-size.js';
 import { normalizeCode, invitationLink, invitationFromLocation } from './invitations.js';
 import { preparePhoto, exportMarkdown, IMAGE_LINK } from './images.js';
 import { renderMarkdown } from './markdown.js';
+import { invitationQrSvg } from './qr.js';
 import { attachFileSharing } from './files.js';
 import { attachAccessControls } from './access.js';
 const $ = id => document.getElementById(id);
@@ -281,6 +282,7 @@ $('share').onclick = async () => {
     }
     $('invite-code').value = selected.room.code;
     $('invite').value = invitationLink(location.origin, selected.room.code);
+    $('invite-qr').innerHTML = invitationQrSvg($('invite').value);
     $('share-dialog').showModal(); sync();
   } catch (error) { notice(`Could not share: ${error.message}. Your document is still available locally.`); }
   finally { $('share').disabled = false; }

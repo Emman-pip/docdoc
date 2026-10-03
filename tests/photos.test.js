@@ -67,5 +67,9 @@ test('host retains photos across synchronization and restart and denies unauthor
   assert.equal(response.status, 200); assert.equal((await response.json()).state.images[0].data, data);
   const denied = await request(restarted, path, { method: 'POST', body: { user: 'stranger', state: new Document('b').snapshot() } });
   assert.equal(denied.status, 403); assert.equal((await denied.json()).state, undefined);
-  for (const path of ['/vim.js', '/images.js', '/markdown.js']) assert.equal((await request(server, path)).status, 200);
+  for (const path of ['/vim.js', '/images.js', '/markdown.js', '/qr.js', '/qrcode-generator.mjs']) {
+    const asset = await request(server, path);
+    assert.equal(asset.status, 200);
+    assert.match(asset.headers.get('content-type'), /javascript/);
+  }
 });
