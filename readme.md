@@ -1,8 +1,8 @@
 # DocDoc Offline
 
-DocDoc Offline is a self-hosted, local-first workspace for writing Markdown documents and sharing files with people on the same local network. It is designed for teams that want a simple collaborative space without relying on a cloud account or internet connection for everyday editing.
+DocDoc Offline is a self-hosted, local-first workspace for writing Markdown and DOCX documents and sharing files with people on the same local network. It is designed for teams that want a simple collaborative space without relying on a cloud account or internet connection for everyday editing.
 
-Documents are saved in each browser and can be edited offline. When you share a document, a DocDoc host stores a durable copy and synchronizes changes with invited collaborators. A character-based CRDT merges concurrent edits and catches up after temporary disconnections. Each document supports up to **five active browser-profile identities**, including the owner. The workspace also includes Markdown preview, embedded photos, optional Vim-style editing, and a separate shared-files area with folders and scoped folder invitations.
+Documents are saved in each browser and can be edited offline. When you share a document, a DocDoc host stores a durable copy and synchronizes changes with invited collaborators. Markdown uses the existing character CRDT; DOCX uses Tiptap and Yjs for structured rich text. Both merge concurrent edits and catch up after temporary disconnections. Each document supports up to **five active browser-profile identities**, including the owner. The workspace also includes Markdown preview, embedded photos, optional Vim-style editing, and a separate shared-files area with folders and scoped folder invitations.
 
 DocDoc is currently a focused text-document MVP. It does not provide full Microsoft Word or Excel compatibility, spreadsheets, authenticated user accounts, or internet-scale cloud hosting. Invitations grant editing access; display names are labels rather than verified identities. See the [technical specification](docs/technical-specification.md) and [CRDT domain guide](docs/crdt-domain-guide.md) for the system model and collaboration details.
 
@@ -29,22 +29,26 @@ These use cases assume collaborators can reach the same host. Offline editing wo
 
 ## Run locally
 
-Requires **Node.js 20 or newer**. There are no package dependencies or build step.
+Requires **Node.js 20 or newer** and npm. Install the locked dependencies before starting. Installation requires registry access (or an existing npm cache); editing and DOCX conversion do not require internet access.
 
 ```sh
-npm start
+npm ci
+npm start     # Builds the browser bundles, then starts the host
 ```
 
 Open **http://localhost:3000**. For collaborators, open `http://<host-LAN-IP>:3000` on devices connected to the same network. The server binds to `0.0.0.0` by default. Set `PORT` and `HOST` to change its address:
 
 ```sh
 PORT=8080 HOST=0.0.0.0 npm start
-npm run dev   # Restart the server when source files change
+npm run dev   # Build once, then restart the server when its modules change
+npm run build # Rebuild browser assets after browser source changes
 npm test      # CRDT, access, transfers, and UI unit/integration tests
 npm run check # JavaScript syntax checks
 ```
 
-No dependency installation is needed: a fresh checkout is ready after installing Node.js. There is no generated build output; the host serves `public/` directly. `.editorconfig` records the existing two-space JavaScript conventions. `npm run check` checks every JavaScript source, script, and test.
+`npm run build` bundles the browser entrypoint and conversion worker into `public/assets/` using esbuild, and generates `public/sw.js` from `scripts/service-worker.js` with the complete asset list and a content-derived cache version. No CDN is used. After changing browser source, rebuild and reload; `npm run dev` watches the server's imported modules. To run an already-built production installation, use `node src/server.js`. The Docker image installs dependencies and builds assets before pruning development dependencies.
+
+Runtime dependencies are Tiptap (core, StarterKit, image, collaboration, ProseMirror bridge), Yjs and its `lib0` decoder, Mammoth for import, `docx` for export, `fflate` for bounded ZIP inspection, and `buffer` for browser compatibility. `docx` is pinned to 9.5.1 to retain Node 20 compatibility. Exact versions and transitive dependencies are recorded in `package-lock.json`; esbuild is a development dependency. `.editorconfig` records two-space JavaScript conventions. `npm run check` recursively checks source, scripts, and feature tests; `npm test` uses Node's built-in test runner.
 
 For browser verification, install Chromium using your OS package manager, then run:
 
@@ -54,7 +58,7 @@ npm run test:browser
 CHROMIUM=/path/to/chromium npm run test:browser
 ```
 
-This opens an isolated headless browser and a temporary local server, exercises light/dark/mobile layouts and collaboration flows, and updates `docs/screenshots/`. It requires permission to bind a loopback port and launch Chromium. It never uses the host's `data/` or your browser profile.
+This opens an isolated headless browser and a temporary local server, exercises Markdown and DOCX, browser conversion, offline reloads, collaboration, and light/dark/mobile layouts, and updates `docs/screenshots/`. It requires permission to bind a loopback port and launch Chromium. It never uses the host's `data/` or your browser profile.
 
 ## Run with Docker at boot (Linux)
 
@@ -91,15 +95,32 @@ Large transfers stream through `data/files/<session-id>/` on the bind mount. All
 
 ## Use the workspace
 
-- Create and rename documents from the sidebar; search by title.
+- Select **New document**, choose **Markdown** (the default) or **DOCX**, then select **Create document**. Rename from the title field and search by title in the sidebar. The first-run starter remains Markdown. A document keeps its chosen format.
 - Write Markdown with heading, bold, italic, list, and quote shortcuts; toggle Preview to read the result.
-- Changes autosave in this browser. Export a `.md` file for a portable backup, including embedded photos.
+- Changes autosave in this browser. Export a `.md` or `.docx` file for a portable content backup, including embedded photos.
 - Enter your display name, select **Share document**, and copy the short invitation link or its code, such as `xyz-jnk-dvc`. Use the host’s LAN address instead of localhost when inviting another device.
 - Open the invitation link, or select **Join with code** on the same LAN host and enter the code. Codes persist across host restarts; existing long invitation links still work.
-- Joined documents open in **Preview**, including when reopened from the sidebar. Select **Edit** to write. Locally created documents start in editing mode.
+- Joined Markdown documents open in **Preview**, including when reopened from the sidebar. Select **Edit** to write. Locally created documents start in editing mode.
 - Anyone with the document invitation link or code can edit unless an enabled session whitelist blocks their connection. Keep invitations within your intended group.
 - The server rejects a sixth active user. Multiple tabs in one browser profile share a user identity and consume one place. Inactive places expire after 15 seconds; an upload in progress retains its place.
 - If the host disappears, continue editing the already-open page. Changes merge automatically when it returns.
+
+## Collaborative DOCX
+
+Choose **DOCX** to write rich text with paragraphs, headings 1–6, bullet and numbered lists, bold, italic, links, and embedded images. The toolbar provides formatting, link editing, and **Photo**; Markdown preview and Vim controls are hidden. **Undo** reverses local rich-text edits. Title editing, local autosave, document switching/deletion, invitations, presence, access rules, and shared files work with either format. DOCX invitations open the rich editor after admission and synchronization.
+
+Select **Import DOCX** to replace the current rich document with a `.docx` file. Conversion runs entirely in a browser worker. The current document is kept if parsing, validation, size checks, or the worker fail, or if the document changes while import is running. **Export** downloads a `.docx` generated from the visible rich content, using a filename derived from the title. Conversion also works after a cached offline reload; document contents are never sent to a conversion service.
+
+This is a defined Word subset, not full Microsoft Word compatibility:
+
+- Supported: paragraphs, semantic headings, bullet/numbered lists (up to nine nested levels on export), bold, italic, `https`/`http`/`mailto` links, embedded PNG/JPEG/WebP images. WebP becomes PNG on export.
+- Tables are flattened into text. Page layout, fonts, colors, headers/footers, comments, tracked changes, fields, footnotes, and other advanced Word features may be simplified or omitted. Custom styles and list numbering/restarts may be simplified. Images export inline with bounded dimensions; exact Word sizing and positioning are not retained. Keep the original file when fidelity matters.
+- Import limits: 10 MiB compressed, 20 MiB expanded, 2,000 ZIP entries, 4 MiB per XML entry, and a 20-second worker timeout. Unsupported/encrypted/malformed files show an error. Embedded import images must be valid PNG/JPEG/WebP at most 256 KiB each; unsupported or oversized images reject the import. Photo uploads use the existing resize/compression workflow.
+- The room request limit remains 2 MiB. DOCX reserves room for request metadata with a 1,900 KiB encoded-state limit and extra import headroom. Yjs history and embedded image bytes count toward it, so large files can be rejected even within the ZIP limits. Browser storage quota can be reached sooner.
+
+Browser records and host snapshots store an immutable `kind`: `markdown` or `docx`. Records lacking it are read as Markdown without a migration rewrite. Markdown snapshots retain the character-CRDT format and existing protocol defaults; DOCX snapshots carry a versioned base64 Yjs update plus the title register. The host validates and durably merges Yjs state without passing it through the Markdown parser. New clients send the kind on creation and sync; invitations and sync responses expose it. Older clients can continue using Markdown rooms but cannot edit DOCX rooms.
+
+![DOCX editor with supported formatting and an embedded image](docs/screenshots/docx-editor.png)
 
 ## Default access list
 
@@ -175,7 +196,7 @@ Folder guests obey the document whitelist and share the same five-user admission
 
 Back up **all of `data/`**, including JSON snapshots and `data/files/`, before updating the host. Existing document snapshots, CRDT migration, document invitations, and root-file endpoints remain compatible. Missing folder metadata defaults to an empty hierarchy; old files appear at the root without rewriting original uploader details. New snapshots additionally persist folder IDs/names/parent IDs, optional file folder IDs, private deletion hashes, folder invitations, and pending cleanup IDs. File bytes retain opaque UUID filenames; user-provided names are never disk paths.
 
-Interrupted temporary uploads are cleaned on restart. Failed or cancelled uploads release their reservations; completed files remain if later files fail. File bytes and folder metadata require the LAN host online and are not included in browser document autosave, Markdown exports, or the service-worker cache. Core editing and saved default-access templates remain local-first.
+Interrupted temporary uploads are cleaned on restart. Failed or cancelled uploads release their reservations; completed files remain if later files fail. File bytes and folder metadata require the LAN host online and are not included in browser document autosave, Markdown exports, or the service-worker cache. Core editing, DOCX conversion, and saved default-access templates remain local-first.
 
 ### File API
 
@@ -183,7 +204,7 @@ All room routes require `Authorization: Bearer <document-or-folder-token>`. File
 
 | Route | Behavior |
 | --- | --- |
-| `POST /api/rooms` | Accepts document `state` and optional validated `policy`, saved together |
+| `POST /api/rooms` | Accepts immutable `kind` (defaults to Markdown), matching `state`, and optional validated `policy`, saved together |
 | `GET /api/rooms/:id/files` | Scoped files/folders, quota totals, and limits; legacy files remain at root |
 | `POST /api/rooms/:id/files?folder=<id>` | Raw streaming body, percent-encoded `X-File-Name`, optional 64-hex `X-Upload-Key`; returns private `deletionToken` only to uploader |
 | `GET /api/rooms/:id/files/:file` | Compatible authenticated streaming download |
@@ -203,21 +224,37 @@ A service worker caches the application after the first visit on **localhost or 
 
 ## Architecture and project structure
 
-- `public/`: responsive browser UI, editor, optional Vim bindings, photo processing and preview, character CRDT, and offline cache worker.
-- `src/server.js`: Node HTTP server, invitation checks, participant admission, synchronization, and atomic snapshot persistence.
-- `public/policy.js` and `src/access-control.js`: shared policy validation, peer-address matching, and Linux ARP-based MAC detection.
-- `src/file-sharing.js`, `src/folders.js`, and `src/zip.js`: streaming transfers, quota reservations, deletion, hierarchy checks, and ZIP generation.
-- `public/icons.svg`: bundled icon assets; `public/focus.js` and `public/defaults.js`: focused views and browser access templates.
-- `scripts/`: syntax checks and isolated Chromium smoke verification; `docs/screenshots/`: UI validation artifacts.
-- `tests/`: concurrent-edit convergence, duplicate/reordered delivery, authorization, five-user capacity, reconnection, and restart persistence checks. Server tests invoke the real request listener without opening TCP sockets.
-- `docs/application-plan.md`: product scope and delivery plan.
-- `docs/technical-specification.md`: implemented architecture, domain model, protocol, trust boundaries, persistence, and operational limits.
-- `docs/crdt-domain-guide.md`: CRDT concepts explained against DocDoc's concrete sequence, title, image, merge, and sync behavior.
+```text
+public/
+  app.js, index.html, styles.css, icons.svg   # Startup, shell, and shared visual assets
+  sw.js                                    # Generated offline cache worker
+  assets/                                  # Generated browser bundles (gitignored)
+  shared/                                  # Document kinds, access-policy contract, icons
+  features/
+    documents/                             # Records, Markdown CRDT/editor, rich model/schema/editor, DOCX conversion
+    collaboration/                         # Invitation parsing, request client, identity labels
+    access/                                # Session controls and default policy templates
+    files/                                 # Shared-file/folder workspace
+    preferences/                           # Theme and focus mode
+src/
+  server.js                                # Server startup and public createApp entrypoint
+  features/
+    rooms/                                 # HTTP document routes, invitation index, atomic snapshots
+    access/                                # Authorization, whitelist matching, admission
+    files/                                 # File/folder routes, streams, quotas, ZIP downloads
+tests/
+  features/{documents,collaboration,access,files}/
+  support/                                 # Request/browser harnesses and shared fixtures
+scripts/                                   # Build, syntax checks, browser verification entrypoint
+docs/                                      # Product plan, technical specification, CRDT guide, screenshots
+```
 
-The CRDT merges immutable character insertions and deletion tombstones; document titles use Lamport timestamps. Clients exchange complete state every two seconds. The server checks invitations and available places before merging or returning content. A browser profile has one user identity; each tab has a separate editing actor.
+The server imports the same feature-owned document models and kind contract as the browser. Rich-text conversion modules run only in the browser. Shared-file bytes stay in the host's `data/files/` and are distinct from document images. Both formats exchange full state every two seconds, keeping the existing five-user admission and access-policy checks. A browser profile has one user identity; each tab has an independent CRDT actor/client ID. Server integration tests call the real request listener without binding TCP; browser tests use an isolated host and Chromium profile.
+
+See [the technical specification](docs/technical-specification.md) for state and protocol details, [the Markdown CRDT guide](docs/crdt-domain-guide.md) for its merge model, and [the application plan](docs/application-plan.md) for scope and future work.
 
 ## Current scope
 
-This is a text-document MVP with basic Markdown formatting, not full Word or Excel compatibility. Spreadsheets, view-only permissions, document-invitation revocation, host migration, and authenticated accounts are future work. Invitation links and short codes act as edit credentials; identities are browser-generated rather than authenticated accounts. The host enforces five distinct presented user identities, not verified people.
+This is a document MVP with Markdown and a limited collaborative DOCX subset. Full Word/Excel fidelity remains outside its scope. Spreadsheets, view-only permissions, document-invitation revocation, host migration, and authenticated accounts are future work. Invitation links and short codes act as edit credentials; identities are browser-generated rather than authenticated accounts. The host enforces five distinct presented user identities, not verified people.
 
-Synchronization accepts up to 2 MB of serialized CRDT state, including edit history. This version is intended for small documents; export a backup if storage or sync limits are reached. Undo reverses local text edits; it does not provide a full document revision history. Markdown preview supports a small formatting subset and uploaded raster photos; it does not render arbitrary HTML or fetch external Markdown images.
+Synchronization accepts up to 2 MB of serialized CRDT state, including edit history. This version is intended for small documents; export a backup if storage or sync limits are reached. Undo reverses local edits within the active editor; it does not provide a full document revision history. Markdown preview supports a small formatting subset and uploaded raster photos; it does not render arbitrary HTML or fetch external Markdown images.

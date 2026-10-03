@@ -4,13 +4,13 @@ This document describes the implemented DocDoc Offline MVP as a system: its doma
 
 ## 1. Product domain
 
-DocDoc is a local-first text workspace with optional LAN collaboration. A person can create and edit Markdown-oriented text documents in a browser without a host. Sharing a document creates a hosted room on one DocDoc server. Each browser keeps a copy; the server keeps a durable snapshot and serves as the rendezvous point for exchanging state.
+DocDoc is a local-first text workspace with optional LAN collaboration. A person can create and edit Markdown or structured DOCX documents in a browser without a host. Sharing a document creates a hosted room on one DocDoc server. Each browser keeps a copy; the server keeps a durable snapshot and serves as the rendezvous point for exchanging state.
 
 The application has two related but distinct content domains:
 
 | Domain | What it contains | Persistence |
 | --- | --- | --- |
-| Text document | Title, character sequence, deletion history, embedded image records | Browser local storage and, for shared rooms, host JSON snapshot |
+| Document | Immutable kind; title; Markdown character history/images or DOCX Yjs rich content/images | Browser local storage and, for shared rooms, host JSON snapshot |
 | Shared files | Opaque file bytes plus names, uploader metadata, folders, invitations | Host filesystem and JSON snapshot only |
 
 The shared-files feature is attached to a room but is not part of the document CRDT or Markdown export. Folder invitations provide a constrained file workspace; they do not grant access to document text. Local-only documents do not currently include the shared file store.
@@ -32,8 +32,8 @@ These credentials are capabilities. They are not user accounts, and a display na
 ```mermaid
 flowchart LR
   subgraph Browser[Each browser origin]
-    UI[Editor and preview]
-    Model[Character CRDT]
+    UI[Markdown editor or Tiptap rich editor]
+    Model[Markdown CRDT or Yjs]
     Local[localStorage snapshot]
     UI --> Model
     Model --> Local
@@ -51,13 +51,17 @@ flowchart LR
   Local -. initial state on share .-> API
 ```
 
-`public/` runs in the browser; `src/server.js` owns the HTTP API and loads `public/crdt.js` as shared model code. The server is authoritative for durable shared-room snapshots, invitation lookup, policy checks, admission, folder scope, and file quotas. It is not a user-authentication service and it does not act as an editor lock.
+`public/` runs in the browser; `src/server.js` composes startup; `src/features/rooms/http.js` handles room requests and composes the access and file features. Both runtimes load the feature-owned document models under `public/features/documents/`. The server is authoritative for durable shared-room snapshots, invitation lookup, policy checks, admission, folder scope, and file quotas. It is not a user-authentication service and it does not act as an editor lock.
 
-The server stores a room snapshot by writing a temporary JSON file and renaming it into place. A room snapshot includes the room ID, room token, invitation code, owner token, access policy, CRDT snapshot, files metadata, folder metadata, folder invitations, and pending byte-cleanup work. File bytes are stored separately under `data/files/<room-id>/` with opaque names. Back up the entire `data/` directory as one logical unit.
+The server stores a room snapshot by writing a temporary JSON file and renaming it into place. A room snapshot includes the room ID, room token, invitation code, owner token, access policy, immutable document kind, typed CRDT snapshot, files metadata, folder metadata, folder invitations, and pending byte-cleanup work. File bytes are stored separately under `data/files/<room-id>/` with opaque names. Back up the entire `data/` directory as one logical unit.
 
-## 3. Document model and CRDT
+## 3. Document kinds and CRDTs
 
-The text CRDT is implemented by `Document` in `public/crdt.js`. It is a replicated growable array (RGA)-style sequence. Each inserted Unicode JavaScript string code unit is one immutable node:
+`public/shared/document-kind.js` defines exactly `markdown` and `docx`. Missing kinds default to Markdown in legacy records and snapshots without requiring a rewrite. Explicit null, unknown values, and cross-format snapshots are rejected. The browser record kind cannot change during merging, and room kind cannot change during synchronization. A folder capability still uses `room.kind: "folder"`; its local placeholder record is Markdown and never participates in document sync.
+
+### Markdown
+
+The text CRDT is implemented by `Document` in `public/features/documents/crdt.js`. It is a replicated growable array (RGA)-style sequence. Each inserted Unicode JavaScript string code unit is one immutable node:
 
 ```text
 { id: "<actor>:<clock>", after: "<parent-id-or-empty>", value: "x", clock: 17, actor: "..." }
@@ -93,15 +97,33 @@ In mathematical terms, node and tombstone union, image union (with conflict reje
 
 - Text is represented as UTF-16 code units because JavaScript string indexing is used. A visible emoji may be multiple CRDT nodes.
 - Tombstones and image records are never compacted. The state grows with edit history, even when visible text stays short.
-- The editor is a plain text/Markdown editor; the CRDT does not model paragraphs, rich-text marks, tables, formulas, or spreadsheet cell identities.
+- The Markdown editor uses plain text; its character CRDT does not model paragraphs, rich-text marks, tables, formulas, or spreadsheet cell identities.
 - There is no durable operation history, revision browser, selective undo, or cross-device undo. Undo reverses local editor text changes by making new CRDT operations.
 - Actor uniqueness depends on random per-tab IDs. Reusing an actor/clock ID for a different node is rejected as a conflict.
+
+### DOCX structured state
+
+`RichDocument` in `public/features/documents/rich-document.js` wraps a Yjs document whose `body` XML fragment is bound to Tiptap by its collaboration extension. The schema permits paragraphs, headings 1–6, bullet/ordered lists, list items, text, line breaks, bold, italic, links, and inline images. Other StarterKit content is disabled. Editor transactions are checked before applying unsupported content. This uses Yjs and the Tiptap binding; it does not implement a second custom rich-text CRDT.
+
+The JSON wire/local snapshot is `{format: "docdoc-yjs-v1", update: "<base64 Yjs v1 update>", title: {value, clock, actor}}`. The title keeps the same Lamport-register semantics as Markdown so local list/title behavior remains consistent. Images are attributes of Yjs image nodes, containing validated embedded PNG/JPEG/WebP data; no shared-file credential is needed to render them. The browser has a separate Yjs client ID per model instance and persists the entire encoded update, including deletion state.
+
+Merging decodes the binary into a candidate Y.Doc, rejects malformed/trailing bytes and unsupported shared types/fields, validates the resulting XML tree and ProseMirror schema, validates links/images/attributes, and enforces the state size budget before applying the update to the live document. The host persists a changed candidate atomically before acknowledging it. Invalid state or failed persistence leaves the prior host state available. Duplicate and reordered Yjs updates converge, including updates awaiting earlier structs. Normal browser polling sends full updates for simple recovery; it is not a state-vector delta transport.
+
+Tiptap supplies local collaborative undo. Remote state is applied to the bound Y.Doc without replacing the editor contents or selection. Switching documents destroys the old editor and Y.Doc. The browser preserves records of either kind during cross-tab storage merges, rejecting kind changes.
+
+### Browser DOCX conversion
+
+Mammoth converts a bounded DOCX archive to HTML in a dedicated worker. `fflate` checks expanded ZIP size/entry count and rebuilds the archive before handing it to Mammoth; external file access and embedded style maps are disabled. A 20-second timeout terminates stuck imports. Inert template parsing removes unsupported elements and attributes before ProseMirror schema parsing, and links and embedded images are validated. A candidate replacement checks the resulting state budget, including existing edit history. Only a successful conversion with the same active, unchanged document reaches `setContent`; errors retain the current document.
+
+The `docx` package generates a downloadable file from current editor JSON in the browser. It writes paragraph/heading styles, nested numbering, bold/italic runs, hyperlinks, and image runs. Browser image decoding supplies dimensions; WebP images are converted to PNG for export. Export filenames omit filesystem separators and unsafe punctuation.
+
+Supported fidelity is semantic content, not Word page rendering. Tables flatten to text; page layout, headers/footers, fonts/colors, comments, tracked changes, fields, footnotes, and advanced features may be simplified or omitted. Custom style names, list starts/restarts, and image sizing/positioning may be simplified. Import accepts at most 10 MiB compressed, 20 MiB expanded, 2,000 ZIP entries, 4 MiB per XML entry, and 256 KiB per embedded raster image. Export supports nine nested list levels. No host or third-party conversion service receives document contents.
 
 ## 4. Persistence, synchronization, and recovery
 
 ### Browser-local persistence
 
-The browser stores document records, credentials, preferences, and identity in `localStorage`. After local changes, the app snapshots the in-memory CRDT and writes the document records back. A storage failure is surfaced to the user; the page retains in-memory changes, but they are at risk if the tab closes. Export Markdown as a portable content backup. Local storage is scoped to the exact origin, so `localhost` and a LAN hostname are separate workspaces.
+The browser stores document records, credentials, preferences, and identity in `localStorage`. After local changes, the app snapshots the in-memory CRDT and writes the document records back. A storage failure is surfaced to the user; the page retains in-memory changes, but they are at risk if the tab closes. Export Markdown or DOCX as a portable content backup. Local storage is scoped to the exact origin, so `localhost` and a LAN hostname are separate workspaces.
 
 ### Full-state anti-entropy
 
@@ -109,12 +131,12 @@ For a joined document, the browser sends its complete current snapshot to `POST 
 
 1. validates invitation bearer token and access policy;
 2. validates the presented browser identity and checks the five-identity active limit;
-3. merges the submitted state into a candidate copy of room state;
-4. rejects it if serialized CRDT state exceeds 2 MiB;
+3. checks the immutable room kind and validates/merges the matching CRDT state into a candidate;
+4. rejects it if serialized CRDT state exceeds 2 MiB (DOCX additionally reserves request headroom with a 1,900 KiB encoded-state budget);
 5. atomically persists a changed candidate before accepting it;
-6. returns the merged snapshot and current participant labels.
+6. returns `kind`, the merged snapshot, and current participant labels.
 
-The browser merges the returned snapshot into its local CRDT, refreshes the editor, and persists again. This is anti-entropy by repeated full snapshots, rather than a push stream or delta protocol. It is easy to recover missed edits after temporary disconnection but costs bandwidth and CPU proportional to accumulated state on every exchange. Synchronization does not happen while the editor is composing an IME input.
+The browser checks response kind and merges the returned snapshot into the matching model, refreshes the editor, and persists again. This is anti-entropy by repeated full snapshots, rather than a push stream or delta protocol. It is easy to recover missed edits after temporary disconnection but costs bandwidth and CPU proportional to accumulated state on every exchange. Synchronization does not happen while the editor is composing an IME input.
 
 ### Offline and reconnection behavior
 
@@ -135,7 +157,7 @@ There is no multi-host replication, quorum, host election, or automatic migratio
 
 ### Document invitation flow
 
-The host creates a room from an initial client snapshot and optional validated access policy. It returns a room ID, room bearer token, short code, and owner token. A code resolves on that host to the document capability. Joining exchanges the code for the room credentials; it does not create an account. A participant must present the room token for document APIs.
+The host creates a room from an initial client snapshot and optional validated access policy. It returns a room ID, room kind, room bearer token, short code, and owner token. A code resolves on that host to the document capability. Joining exchanges the code for the room credentials and kind, then admits the browser through a typed sync before opening the editor; it does not create an account. A participant must present the room token for document APIs.
 
 Document invitation access is currently edit access. There is no view-only role and no document-invitation revocation control. Revoking a credential is not possible through the user-facing MVP; anyone who already copied document content retains that copy.
 
@@ -169,9 +191,9 @@ All API bodies are JSON except raw file upload bodies and streamed downloads. Ro
 
 | Endpoint | Purpose and key behavior |
 | --- | --- |
-| `POST /api/rooms` | Create room from `{state, policy?}`; returns room credentials and invitation code |
-| `POST /api/invitations/join` | Resolve `{code, user, name}`; returns document or scoped folder capability |
-| `POST /api/rooms/:id/sync` | Submit `{user, name, state}`; returns merged `state`, `users`, and limit |
+| `POST /api/rooms` | Create room from `{kind?, state, policy?}` (missing kind means Markdown); returns room credentials and invitation code |
+| `POST /api/invitations/join` | Resolve `{code, user, name}`; returns document capability with `kind`, or scoped `kind: "folder"` capability |
+| `POST /api/rooms/:id/sync` | Submit `{user, name, kind?, state}`; returns immutable `kind`, merged `state`, `users`, and limit |
 | `POST /api/rooms/:id/leave` | Release the presented browser identity's active place |
 | `POST /api/rooms/:id/invitation` | Return or create the room's invitation details |
 | `POST /api/rooms/:id/access` | Owner gets or sets whitelist policy and sees connection/participant metadata |
@@ -182,7 +204,7 @@ All API bodies are JSON except raw file upload bodies and streamed downloads. Ro
 | `POST /api/rooms/:id/download-tickets` | Create a short-lived ticket for file or folder download |
 | `GET /api/downloads/:ticket` | Redeem once; rechecks access and streams content |
 
-The authoritative route behavior is in `src/server.js`, `src/file-sharing.js`, and `src/folders.js`. This table is a domain-level map; consult those handlers before changing wire compatibility.
+The authoritative route behavior is in `src/features/rooms/http.js`, `src/features/files/routes.js`, and their feature modules. This table is a domain-level map; consult those handlers before changing wire compatibility.
 
 ## 8. Operational limits and failure modes
 
@@ -198,20 +220,24 @@ The authoritative route behavior is in `src/server.js`, `src/file-sharing.js`, a
 | Folder metadata count | 5,000 per room |
 | Download ticket | One use, 60 seconds, in-memory only |
 
-Storage pressure can arise before visible text is large because CRDT tombstones are retained. Exporting visible Markdown does not preserve CRDT history, access policy, invitation credentials, folders, or shared-file bytes. Host backups must include snapshot JSON and file bytes. A filesystem or browser-storage write failure should be treated as a durability warning, not as proof that a change was saved.
+Storage pressure can arise before visible text is large because CRDT tombstones are retained. Exporting Markdown or DOCX does not preserve CRDT history, access policy, invitation credentials, folders, or shared-file bytes. Host backups must include snapshot JSON and file bytes. A filesystem or browser-storage write failure should be treated as a durability warning, not as proof that a change was saved.
 
 ## 9. Current scope and extension points
 
-The MVP deliberately covers text and LAN collaboration. It does not implement office file compatibility, spreadsheet cells/formulas, rich-text mark CRDTs, comment/review workflows, account authentication, role-based view-only access, document invitation revocation, host migration, delta synchronization, tombstone compaction, or cross-host replication.
+The MVP deliberately covers text and LAN collaboration. It supports a limited DOCX subset. It does not implement full office file compatibility, spreadsheet cells/formulas, comment/review workflows, account authentication, role-based view-only access, document invitation revocation, host migration, delta synchronization, tombstone compaction, or cross-host replication.
 
-Before adding spreadsheets, define stable row/column identity, concurrent cell write policy, behavior for row/column deletion versus references, and deterministic formula evaluation. Before adding rich formatting, choose whether marks are character attributes, interval CRDTs, or structured blocks, and specify how edits transform formatting. Before compacting history, establish replica acknowledgement or another safe rule proving no offline replica still needs a tombstoned element.
+Before adding spreadsheets, define stable row/column identity, concurrent cell write policy, behavior for row/column deletion versus references, and deterministic formula evaluation. Before compacting history, establish replica acknowledgement or another safe rule proving no offline replica still needs a tombstoned element.
 
-## 10. Code map
+## 10. Code map and build
 
-- `public/crdt.js`: sequence CRDT, title register, image set, snapshot merge/validation.
-- `public/app.js`: browser record lifecycle, local persistence, editing, sync loop, share/join flows.
-- `public/sw.js`: static application cache for supported secure contexts.
-- `src/server.js`: room loading and persistence, HTTP routes, invitations, access, admission, CRDT merge.
-- `src/access-control.js` and `public/policy.js`: access-policy matching and validation.
-- `src/file-sharing.js`, `src/folders.js`, `src/zip.js`: streaming file store, hierarchy/scope, and archive output.
-- `tests/crdt.test.js`: convergence and malformed/conflicting state scenarios; other tests cover server routes and UI behavior.
+- `public/app.js`: small browser startup; `public/features/documents/workspace.js`: composes the document workspace with collaboration, access, file, and preference features.
+- `public/features/documents/`: local records and typed model factory; existing Markdown CRDT/editor/Vim/photos; rich schema, Yjs model, Tiptap editor, browser DOCX import/export.
+- `public/features/collaboration/`: invitation parsing, API requests, display names. `public/features/access/`: access/defaults UI. `public/features/files/`: file/folder UI. `public/features/preferences/`: theme and focus.
+- `public/shared/`: immutable kind contract, policy validation shared with the host, and icons shared across UI features.
+- `src/server.js`: startup; `src/features/rooms/`: document routes, room persistence and invitation index; `src/features/access/`: authorization/admission and LAN identity; `src/features/files/`: routes, storage, quotas, folder scope, ZIP streams.
+- `tests/features/`: documents, collaboration, access, and files, including feature browser scenarios. `tests/support/`: shared request/browser harnesses and fixtures. Server integration tests invoke the request listener without TCP.
+- `scripts/build.mjs`: esbuild bundles `public/app.js` and the DOCX worker into gitignored `public/assets/`, then generates `public/sw.js` from `scripts/service-worker.js` with all required bundles/chunks, shell assets, and a content hash. Secure-origin offline reloads include the conversion worker. File bytes/API responses are never cached.
+
+Node 20+ with npm is required. Run `npm ci`, `npm run build`, then `node src/server.js`; `npm start` and `npm run dev` build automatically before starting. Rebuild after browser source edits. Run `npm test`, `npm run check`, and `npm run test:browser` (Chromium required; `CHROMIUM` overrides its path). Browser tests build first and update screenshots in `docs/screenshots/`. `npm run check` recursively checks source syntax. Dependency versions are locked: Tiptap/Yjs for rich editing, Mammoth for browser import, `docx` for export, `fflate` for ZIP limits, `buffer`/`lib0` for browser and binary support, and esbuild for build-time bundling. The Docker build installs development dependencies to build assets, then prunes them for runtime.
+
+Upstream references: [Tiptap collaboration](https://tiptap.dev/docs/editor/extensions/functionality/collaboration), [Yjs](https://docs.yjs.dev/), [Mammoth conversion and security](https://github.com/mwilliamson/mammoth.js), and [docx generation](https://docx.js.org/). DocDoc implements the subset and limits above; upstream library support does not imply additional format compatibility.

@@ -1,6 +1,8 @@
 # CRDT Domain Guide for DocDoc
 
-This guide explains the ideas needed to reason about DocDoc's collaborative text model. It focuses on the concrete implementation in `public/crdt.js`; it is not a general CRDT catalog.
+This guide describes **Markdown** documents. DOCX documents use Tiptap/Yjs structured state, described in the [technical specification](technical-specification.md#docx-structured-state).
+
+This guide explains the ideas needed to reason about DocDoc's collaborative text model. It focuses on the concrete implementation in `public/features/documents/crdt.js`; it is not a general CRDT catalog.
 
 ## The problem CRDTs solve
 

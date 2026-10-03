@@ -1,8 +1,10 @@
-const CACHE = 'docdoc-v8';
-const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/crdt.js', '/vim.js', '/images.js', '/markdown.js', '/files.js', '/vim-cursor.js', '/invitations.js', '/access.js', '/editor-size.js', '/usernames.js', '/policy.js', '/defaults.js', '/icons.js', '/icons.svg', '/focus.js', '/theme.js'];
+const CACHE = 'docdoc-e718fdefeae81700';
+const ASSETS = ["/","/index.html","/styles.css","/icons.svg","/assets/app.js","/assets/chunk-25IFJBBH.js","/assets/docx-worker.js"];
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS))); self.skipWaiting(); });
-self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
+self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key.startsWith('docdoc-') && key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin || new URL(event.request.url).pathname.startsWith('/api/')) return;
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request).then(cached => cached || (event.request.mode === 'navigate' ? caches.match('/') : Response.error()))));
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+  // Serve one coherent build from the cache, including the conversion worker.
+  event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).catch(() => event.request.mode === 'navigate' ? caches.match('/') : Response.error())));
 });

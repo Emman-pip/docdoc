@@ -8,9 +8,30 @@
     "dev": "node --watch src/server.js",
     "test": "node --test",
     "check": "node scripts/check.mjs",
-    "test:browser": "node scripts/browser-smoke.mjs"
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "build": "node scripts/build.mjs",
+    "prestart": "npm run build",
+    "predev": "npm run build",
+    "pretest:browser": "npm run build"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@tiptap/core": "3.31.4",
+    "@tiptap/extension-collaboration": "3.31.4",
+    "@tiptap/extension-image": "3.31.4",
+    "@tiptap/pm": "3.31.4",
+    "@tiptap/starter-kit": "3.31.4",
+    "@tiptap/y-tiptap": "3.0.9",
+    "buffer": "6.0.3",
+    "docx": "9.5.1",
+    "fflate": "0.8.3",
+    "lib0": "0.2.119",
+    "mammoth": "1.13.0",
+    "yjs": "13.6.33"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }
