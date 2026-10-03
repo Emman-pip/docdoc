@@ -120,7 +120,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
         }
         if (url.pathname === '/api/rooms') {
           const doc = new Document('server', input.state);
-          const room = { id: randomUUID(), token: randomBytes(32).toString('hex'), code: makeCode(), ownerToken: randomBytes(32).toString('hex'), policy: emptyPolicy(), doc, users: new Map() };
+          const room = { id: randomUUID(), token: randomBytes(32).toString('hex'), code: makeCode(), ownerToken: randomBytes(32).toString('hex'), policy: input.policy === undefined ? emptyPolicy() : validatePolicy(input.policy), doc, users: new Map() };
           save(room); rooms.set(room.id, room); invitations.set(room.code, room.id);
           return json(res, 201, { id: room.id, token: room.token, code: room.code, ownerToken: room.ownerToken });
         }
@@ -153,7 +153,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
         return json(res, 200, { state: room.doc.snapshot(), users: [...room.users].map(([id, user]) => ({ id, name: user.name })), limit: 5 });
       }
       if (!['GET', 'HEAD'].includes(req.method)) return json(res, 405, { error: 'Method not allowed' });
-      const files = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/crdt.js': 'crdt.js', '/styles.css': 'styles.css', '/sw.js': 'sw.js', '/vim.js': 'vim.js', '/images.js': 'images.js', '/markdown.js': 'markdown.js', '/files.js': 'files.js', '/vim-cursor.js': 'vim-cursor.js', '/invitations.js': 'invitations.js', '/access.js': 'access.js', '/editor-size.js': 'editor-size.js', '/usernames.js': 'usernames.js' };
+      const files = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/crdt.js': 'crdt.js', '/styles.css': 'styles.css', '/sw.js': 'sw.js', '/vim.js': 'vim.js', '/images.js': 'images.js', '/markdown.js': 'markdown.js', '/files.js': 'files.js', '/vim-cursor.js': 'vim-cursor.js', '/invitations.js': 'invitations.js', '/access.js': 'access.js', '/editor-size.js': 'editor-size.js', '/usernames.js': 'usernames.js', '/policy.js': 'policy.js', '/defaults.js': 'defaults.js' };
       const file = INVITATION_CODE.test(url.pathname.slice(1)) ? 'index.html' : files[url.pathname];
       if (!file) return json(res, 404, { error: 'Not found' });
       const type = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html';

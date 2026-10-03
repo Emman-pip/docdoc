@@ -1,0 +1,34 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { newDocumentPolicy, saveDefaults } from '../public/defaults.js';
+import { emptyPolicy } from '../public/policy.js';
+import { createApp } from '../src/server.js';
+import { Document } from '../public/crdt.js';
+import { request } from './request-helper.js';
+test('defaults are disabled, copied on creation, and later changes or failed saves preserve existing rules', () => {
+  let value = null; const storage = { getItem: () => value, setItem: (_, next) => { value = next; } };
+  assert.deepEqual(newDocumentPolicy(storage), emptyPolicy());
+  saveDefaults(storage, { ...emptyPolicy(), enabled: true, usernames: ['Alice'] });
+  const first = newDocumentPolicy(storage);
+  saveDefaults(storage, { ...emptyPolicy(), usernames: ['Bob'] });
+  assert.deepEqual(first.usernames, ['alice']); assert.deepEqual(newDocumentPolicy(storage).usernames, ['bob']);
+  assert.throws(() => saveDefaults(storage, { ...emptyPolicy(), ips: ['bad'] }), /Invalid/);
+  assert.deepEqual(newDocumentPolicy(storage).usernames, ['bob']);
+  storage.setItem = () => { throw new Error('Storage full'); };
+  assert.throws(() => saveDefaults(storage, emptyPolicy()), /Storage full/);
+  assert.deepEqual(newDocumentPolicy(storage).usernames, ['bob']);
+});
+test('creation validates policy before persisting snapshot and remains compatible when policy is omitted', async t => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'docdoc-defaults-')); t.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const server = createApp({ dataDir }), state = new Document('owner').snapshot();
+  const bad = await request(server, '/api/rooms', { method: 'POST', body: { state, policy: { enabled: true } } });
+  assert.equal(bad.status, 400); assert.deepEqual(readdirSync(dataDir), []);
+  const room = await (await request(server, '/api/rooms', { method: 'POST', body: { state, policy: { ...emptyPolicy(), enabled: true } } })).json();
+  const saved = JSON.parse(readFileSync(join(dataDir, room.id + '.json'))); assert.equal(saved.policy.enabled, true); assert.ok(saved.state);
+  const denied = await request(server, `/api/rooms/${room.id}/sync`, { method: 'POST', headers: { Authorization: `Bearer ${room.token}` }, body: { user: 'guest', state } }); assert.equal(denied.status, 403);
+  const legacy = await (await request(server, '/api/rooms', { method: 'POST', body: { state } })).json();
+  assert.deepEqual(JSON.parse(readFileSync(join(dataDir, legacy.id + '.json'))).policy, emptyPolicy());
+});

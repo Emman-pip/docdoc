@@ -1,3 +1,4 @@
+import { attachDefaults, newDocumentPolicy } from './defaults.js';
 import { generateUsername, initializeUsername } from './usernames.js';
 import { Document } from './crdt.js';
 import { attachVimControls } from './vim.js';
@@ -104,7 +105,7 @@ function open(record) {
 }
 function create(title = 'Untitled document', content = '') {
   const fresh = new Document(actor); fresh.rename(title); fresh.edit(content);
-  const record = { id: uuid(), state: fresh.snapshot(), updated: Date.now() };
+  const record = { id: uuid(), state: fresh.snapshot(), updated: Date.now(), policy: newDocumentPolicy(localStorage), local: true };
   records.push(record); open(record); persist();
 }
 async function request(path, input, token, ownerToken) {
@@ -246,7 +247,7 @@ async function ensureRoom(selected = current) {
   if (selected.room) return selected.room;
   if (creatingRoom?.record === selected) return creatingRoom.promise;
   const selectedDoc = doc;
-  const promise = request('/api/rooms', { state: selectedDoc.snapshot() }).then(room => {
+  const promise = request('/api/rooms', { state: selectedDoc.snapshot(), policy: selected.policy }).then(room => {
     selected.room = room;
     if (selected === current) { persist(); sync(); }
     return room;
@@ -255,6 +256,7 @@ async function ensureRoom(selected = current) {
   try { return await promise; } finally { if (creatingRoom?.promise === promise) creatingRoom = null; }
 }
 const fileSharing = attachFileSharing({ $, user, getCurrent: () => current, getName: () => $('name').value, ensureRoom });
+attachDefaults($);
 attachAccessControls({ $, getCurrent: () => current, getName: () => $('name').value, ensureRoom, persist, sync });
 $('share').onclick = async () => {
   const selected = current;
