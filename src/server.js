@@ -18,6 +18,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
     try {
       const saved = JSON.parse(readFileSync(resolve(dataDir, filename), 'utf8'));
       if (INVITATION_CODE.test(saved.code)) invitations.set(saved.code, saved.id);
+      for (const invite of saved.folderInvitations || []) if (INVITATION_CODE.test(invite.code)) invitations.set(invite.code, { id: saved.id, token: invite.token });
     } catch { console.warn(`Could not index invitation for ${filename}.`); }
   }
   function makeCode() {
@@ -53,6 +54,19 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
   function authorize(req, id) {
     const room = load(id), token = (req.headers.authorization || '').replace(/^Bearer /, '');
     return room && /^[a-f0-9]{64}$/.test(token) && timingSafeEqual(Buffer.from(token), Buffer.from(room.token)) ? room : null;
+  }
+  function fileAccess(req, id) {
+    const room = load(id);
+    if (!room) return null;
+    if (authorize(req, id)) return { room, scope: null, invitation: null };
+    const token = (req.headers.authorization || '').replace(/^Bearer /, '');
+    const invitation = (room.folderInvitations || []).find(item => item.token === token);
+    if (!invitation || !(room.folders || []).some(folder => folder.id === invitation.folderId)) return null;
+    return { room, scope: invitation.folderId, invitation };
+  }
+  function stillAllowed(req, access, name, res) {
+    if (access.invitation && !access.room.folderInvitations.includes(access.invitation)) { json(res, 403, { error: 'Folder invitation was revoked.' }); return false; }
+    return checkAccess(req, access.room, name, res);
   }
   function isOwner(req, room) {
     const key = req.headers['x-owner-key'] || '';
@@ -95,19 +109,21 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
         if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}` && req.headers.origin !== `https://${req.headers.host}`) return json(res, 403, { error: 'Origin rejected' });
         const filesMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9-]{36})\/files(?:\/([a-f0-9-]{36}))?$/);
         if (filesMatch) {
-          const room = authorize(req, filesMatch[1]);
+          const access = fileAccess(req, filesMatch[1]), room = access?.room;
           if (!room) return json(res, 403, { error: 'Invitation is invalid or unavailable on this host.' });
-          await handleFileRequest({ req, res, url, room, fileId: filesMatch[2], dataDir, save, admit: (...args) => admit(req, ...args), canAccess: () => checkAccess(req, room, url.searchParams.get('name'), res), json, now });
+          await handleFileRequest({ req, res, url, room, scope: access.scope, owner: isOwner(req, room), fileId: filesMatch[2], dataDir, save, admit: (...args) => admit(req, ...args), canAccess: () => stillAllowed(req, access, url.searchParams.get('name'), res), json, now });
           return;
         }
         const foldersMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9-]{36})\/folders$/);
         if (foldersMatch) {
-          const room = authorize(req, foldersMatch[1]);
+          const access = fileAccess(req, foldersMatch[1]), room = access?.room;
           if (!room) return json(res, 403, { error: 'Invitation is invalid or unavailable on this host.' });
           if (!admit(req, room, url.searchParams.get('user'), url.searchParams.get('name'), res)) return;
-          if (req.method === 'GET') return json(res, 200, inventory(room));
+          if (req.method === 'GET') return json(res, 200, inventory(room, access.scope));
           if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
-          return json(res, 200, manageFolders(room, await body(req), { owner: isOwner(req, room), save }));
+          const input = await body(req);
+          if (!stillAllowed(req, access, url.searchParams.get('name'), res)) return;
+          return json(res, 200, manageFolders(room, input, { scope: access.scope, owner: isOwner(req, room), save }));
         }
         if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
         const input = await body(req);
@@ -119,12 +135,18 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
           for (const [key, value] of attempts) if (now() - value.started > 60000) attempts.delete(key);
           const attempt = attempts.get(address) || { started: now(), count: 0 };
           if (attempt.count >= 10) return json(res, 429, { error: 'Too many incorrect invitation codes. Try again in a minute.' });
-          const id = invitations.get(code), room = id && load(id);
-          if (!room) {
+          const entry = invitations.get(code), room = entry && load(typeof entry === 'string' ? entry : entry.id);
+          const folderInvite = room && typeof entry === 'object' && (room.folderInvitations || []).find(invite => invite.token === entry.token);
+          if (!room || (typeof entry === 'object' && !folderInvite)) {
             attempt.count++; if (attempts.size < 1000 || attempts.has(address)) attempts.set(address, attempt);
             return json(res, 404, { error: 'Invitation code was not found on this LAN host.' });
           }
           if (!checkAccess(req, room, input.name, res)) return;
+          if (folderInvite) {
+            if (!admit(req, room, input.user, input.name, res)) return;
+            attempts.delete(address);
+            return json(res, 200, { id: room.id, token: folderInvite.token, code: folderInvite.code, folderId: folderInvite.folderId, kind: 'folder' });
+          }
           attempts.delete(address);
           return json(res, 200, { id: room.id, token: room.token, code: room.code });
         }
@@ -134,9 +156,27 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
           save(room); rooms.set(room.id, room); invitations.set(room.code, room.id);
           return json(res, 201, { id: room.id, token: room.token, code: room.code, ownerToken: room.ownerToken });
         }
-        const match = url.pathname.match(/^\/api\/rooms\/([^/]+)\/(sync|leave|invitation|access)$/);
+        const match = url.pathname.match(/^\/api\/rooms\/([^/]+)\/(sync|leave|invitation|access|folder-invitations)$/);
         const room = match && authorize(req, match[1]);
         if (!room) return json(res, 403, { error: 'Invitation is invalid or unavailable on this host.' });
+        if (match[2] === 'folder-invitations') {
+          if (!isOwner(req, room)) return json(res, 403, { error: 'Only the session owner can manage folder invitations.' });
+          room.folderInvitations ||= [];
+          const previous = room.folderInvitations;
+          let invitation;
+          if (input.action === 'create') {
+            requireFolder(room, input.folderId);
+            if (!input.folderId) return json(res, 400, { error: 'Select a folder to share.' });
+            if (previous.length >= 1000) return json(res, 413, { error: 'Revoke an invitation before creating more.' });
+            invitation = { folderId: input.folderId, token: randomBytes(32).toString('hex'), code: makeCode() };
+            room.folderInvitations = [...previous, invitation];
+          } else if (input.action === 'revoke') room.folderInvitations = previous.filter(item => item.code !== input.code);
+          else if (input.action !== 'list') return json(res, 400, { error: 'Invalid invitation action' });
+          try { save(room); } catch (error) { room.folderInvitations = previous; throw error; }
+          if (invitation) invitations.set(invitation.code, { id: room.id, token: invitation.token });
+          if (input.action === 'revoke' && previous.some(item => item.code === input.code)) invitations.delete(input.code);
+          return json(res, 200, { invitations: room.folderInvitations.map(({ code, folderId }) => ({ code, folderId })) });
+        }
         if (match[2] === 'access') {
           if (!isOwner(req, room)) return json(res, 403, { error: 'Only the session owner can manage the whitelist. Supply the owner key saved on the host for an older session.' });
           if (input.action === 'set') {

@@ -1,3 +1,4 @@
+import { inventory, requireFolder, publicFile } from './folders.js';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, renameSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -6,7 +7,7 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_ROOM_BYTES = 100 * 1024 * 1024;
 export const MAX_FILES = 20;
 
-export async function handleFileRequest({ req, res, url, room, fileId, dataDir, save, admit, canAccess, json, now }) {
+export async function handleFileRequest({ req, res, url, room, scope = null, fileId, dataDir, save, admit, canAccess, json, now }) {
   const user = url.searchParams.get('user'), name = url.searchParams.get('name') || 'Collaborator';
   if (!['GET', 'POST'].includes(req.method) || (fileId && req.method !== 'GET')) return json(res, 405, { error: 'Method not allowed' });
   if (!admit(room, user, name, res)) return;
@@ -14,6 +15,7 @@ export async function handleFileRequest({ req, res, url, room, fileId, dataDir, 
   if (fileId) {
     const file = room.files.find(file => file.id === fileId);
     if (!file) return json(res, 404, { error: 'File not found' });
+    requireFolder(room, file.folderId || null, scope);
     const data = readFileSync(resolve(dataDir, 'files', room.id, `${file.id}.bin`));
     res.writeHead(200, {
       'Content-Type': 'application/octet-stream',
@@ -22,7 +24,9 @@ export async function handleFileRequest({ req, res, url, room, fileId, dataDir, 
     });
     res.end(data); return;
   }
-  if (req.method === 'GET') return json(res, 200, { files: room.files, maxFileBytes: MAX_FILE_BYTES, maxRoomBytes: MAX_ROOM_BYTES, maxFiles: MAX_FILES });
+  if (req.method === 'GET') return json(res, 200, { ...inventory(room, scope), maxFileBytes: MAX_FILE_BYTES, maxRoomBytes: MAX_ROOM_BYTES, maxFiles: MAX_FILES });
+  const folderId = url.searchParams.get('folder') || scope;
+  requireFolder(room, folderId, scope);
   let filename;
   try { filename = decodeURIComponent(req.headers['x-file-name'] || ''); } catch { return json(res, 400, { error: 'Invalid filename' }); }
   filename = filename.replace(/[\x00-\x1f\x7f/\\]/g, '_').trim().slice(0, 200);
@@ -35,9 +39,10 @@ export async function handleFileRequest({ req, res, url, room, fileId, dataDir, 
     chunks.push(chunk);
   }
   if (!canAccess()) return;
+  requireFolder(room, folderId, scope);
   // Check again after receiving the body so concurrent uploads cannot exceed the quota.
   if (room.files.length >= MAX_FILES || room.files.reduce((sum, file) => sum + file.size, 0) + size > MAX_ROOM_BYTES) return json(res, 413, { error: 'This session has reached its limit of 20 files or 100 MB.' });
-  const file = { id: randomUUID(), name: filename, size, uploadedBy: String(name).trim().slice(0, 40) || 'Collaborator', uploadedByIP: normalizeIP(req.socket?.remoteAddress), uploadedByUser: user, createdAt: now() };
+  const file = { id: randomUUID(), folderId, name: filename, size, uploadedBy: String(name).trim().slice(0, 40) || 'Collaborator', uploadedByIP: normalizeIP(req.socket?.remoteAddress), uploadedByUser: user, createdAt: now() };
   const directory = resolve(dataDir, 'files', room.id); mkdirSync(directory, { recursive: true });
   const path = resolve(directory, `${file.id}.bin`);
   try {
@@ -47,5 +52,5 @@ export async function handleFileRequest({ req, res, url, room, fileId, dataDir, 
     room.files = room.files.filter(item => item.id !== file.id);
     rmSync(path, { force: true }); rmSync(`${path}.tmp`, { force: true }); throw error;
   }
-  json(res, 201, { file });
+  json(res, 201, { file: publicFile(file) });
 }
