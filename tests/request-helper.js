@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 
 // Exercise the actual HTTP request listener without opening a TCP port.
 // This keeps handler integration tests usable in restricted environments.
@@ -9,15 +9,16 @@ export function request(server, path, { method = 'GET', body, rawBody, rawChunks
     req.url = path; req.method = method;
     req.headers = { host: 'localhost:3000', ...Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])) };
     const responseHeaders = new Map();
-    const res = {
-      status: 200,
-      setHeader(key, value) { responseHeaders.set(key.toLowerCase(), value); },
-      writeHead(status, headers = {}) { this.status = status; for (const [key, value] of Object.entries(headers)) this.setHeader(key, value); },
-      end(body = '') {
-        const text = body.toString();
-        resolve({ status: this.status, headers: { get: key => responseHeaders.get(key.toLowerCase()) }, text: async () => text, json: async () => JSON.parse(text), bytes: async () => Buffer.from(body) });
-      },
-    };
+    const chunks = [];
+    const res = new Writable({ write(chunk, encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+    res.status = 200;
+    res.setHeader = (key, value) => responseHeaders.set(key.toLowerCase(), value);
+    res.writeHead = (status, headers = {}) => { res.status = status; res.headersSent = true; for (const [key, value] of Object.entries(headers)) res.setHeader(key, value); };
+    res.on('error', reject);
+    res.on('finish', () => {
+      const bytes = Buffer.concat(chunks), text = bytes.toString();
+      resolve({ status: res.status, headers: { get: key => responseHeaders.get(key.toLowerCase()) }, text: async () => text, json: async () => JSON.parse(text), bytes: async () => bytes });
+    });
     try { server.emit('request', req, res); } catch (error) { reject(error); }
   });
 }

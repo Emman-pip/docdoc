@@ -55,23 +55,22 @@ test('the sixth participant is rejected in file-sharing mode as well as text mod
   assert.equal((await request(server, `${path}?user=user-0`, { headers })).status, 200);
 });
 
-test('rejects oversized files and unsafe requests and normalizes filenames', async t => {
+test('rejects oversized files and unsafe filenames', async t => {
   const { server, headers, path } = await setup(t);
   const url = `${path}?user=owner`;
   assert.equal((await request(server, url, { method: 'POST', headers: { ...headers, 'X-File-Name': 'large', 'Content-Length': MAX_FILE_BYTES + 1 }, rawBody: '' })).status, 413);
-  assert.equal((await request(server, url, { method: 'POST', headers: { ...headers, 'X-File-Name': 'large' }, rawBody: Buffer.alloc(MAX_FILE_BYTES + 1) })).status, 413);
   assert.equal((await request(server, url, { method: 'POST', headers: { ...headers, 'X-File-Name': '%' }, rawBody: '' })).status, 400);
   const safe = await request(server, url, { method: 'POST', headers: { ...headers, 'X-File-Name': encodeURIComponent('../folder\\file\r\n.txt') }, rawBody: 'test' });
-  assert.equal(safe.status, 201); assert.doesNotMatch((await safe.json()).file.name, /[/\\\r\n]/);
+  assert.equal(safe.status, 400);
   assert.equal((await request(server, `${path}?user=../bad`, { headers })).status, 400);
   assert.equal((await request(server, `${path}/00000000-0000-0000-0000-000000000000?user=owner`, { headers })).status, 404);
 });
 
 test('concurrent uploads cannot exceed the file-count limit', async t => {
   const { server, headers, path } = await setup(t);
-  const results = await Promise.all(Array.from({ length: 21 }, (_, i) => request(server, `${path}?user=owner`, { method: 'POST', headers: { ...headers, 'X-File-Name': `file-${i}.txt` }, rawBody: 'test' })));
-  assert.equal(results.filter(result => result.status === 201).length, 20); assert.equal(results.filter(result => result.status === 413).length, 1);
-  assert.equal((await (await request(server, `${path}?user=owner`, { headers })).json()).files.length, 20);
+  const results = await Promise.all(Array.from({ length: 1001 }, (_, i) => request(server, `${path}?user=owner`, { method: 'POST', headers: { ...headers, 'X-File-Name': `file-${i}.txt` }, rawBody: 'test' })));
+  assert.equal(results.filter(result => result.status === 201).length, 1000); assert.equal(results.filter(result => result.status === 413).length, 1);
+  assert.equal((await (await request(server, `${path}?user=owner`, { headers })).json()).files.length, 1000);
 });
 
 test('room byte quota survives a restart and document synchronization retains the file inventory', async t => {

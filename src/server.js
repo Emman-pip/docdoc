@@ -5,15 +5,17 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Document } from '../public/crdt.js';
 import { manageFolders, requireFolder, inventory } from './folders.js';
-import { handleFileRequest } from './file-sharing.js';
+import { streamZip } from './zip.js';
+import { handleFileRequest, streamFile, cleanupTemporaryFiles, cleanupFiles } from './file-sharing.js';
 import { INVITATION_CODE } from '../public/invitations.js';
 import { emptyPolicy, validatePolicy, normalizeIP, normalizeMAC, lookupLanMAC, matchesPolicy } from './access-control.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
 const LIMIT = 2 * 1024 * 1024;
-export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC = lookupLanMAC } = {}) {
+export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC = lookupLanMAC, removeFile } = {}) {
   mkdirSync(dataDir, { recursive: true });
-  const rooms = new Map(), invitations = new Map(), attempts = new Map();
+  cleanupTemporaryFiles(dataDir);
+  const rooms = new Map(), invitations = new Map(), attempts = new Map(), tickets = new Map();
   for (const filename of readdirSync(dataDir).filter(name => /^[a-f0-9-]{36}\.json$/.test(name))) {
     try {
       const saved = JSON.parse(readFileSync(resolve(dataDir, filename), 'utf8'));
@@ -48,6 +50,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
     const room = { ...stored, policy: stored.policy || emptyPolicy(), doc: new Document('server', stored.state), users: new Map() };
     if (!room.ownerToken) { room.ownerToken = randomBytes(32).toString('hex'); save(room); }
     rooms.set(id, room);
+    cleanupFiles(room, dataDir, save, removeFile);
     return room;
   }
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); };
@@ -107,11 +110,48 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname.startsWith('/api/')) {
         if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}` && req.headers.origin !== `https://${req.headers.host}`) return json(res, 403, { error: 'Origin rejected' });
+        const downloadMatch = url.pathname.match(/^\/api\/downloads\/([a-f0-9]{64})$/);
+        if (downloadMatch) {
+          if (req.method !== 'GET') return json(res, 405, { error: 'Use GET' });
+          const ticket = tickets.get(downloadMatch[1]); tickets.delete(downloadMatch[1]);
+          if (!ticket || ticket.expires <= now()) return json(res, 403, { error: 'Download ticket expired or was already used. Start the download again.' });
+          req.headers.authorization = ticket.authorization;
+          req.headers['x-owner-key'] = ticket.ownerKey;
+          const access = fileAccess(req, ticket.roomId);
+          if (!access) return json(res, 403, { error: 'Invitation was revoked or is unavailable.' });
+          if (!admit(req, access.room, ticket.user, ticket.name, res)) return;
+          if (ticket.fileId) {
+            const file = (access.room.files || []).find(item => item.id === ticket.fileId);
+            if (!file) return json(res, 404, { error: 'File not found.' });
+            requireFolder(access.room, file.folderId || null, access.scope);
+            return await streamFile(res, dataDir, access.room, file);
+          }
+          requireFolder(access.room, ticket.folderId, access.scope);
+          return await streamZip(res, access.room, ticket.folderId, dataDir);
+        }
+        const ticketMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9-]{36})\/download-tickets$/);
+        if (ticketMatch) {
+          if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
+          const input = await body(req), access = fileAccess(req, ticketMatch[1]);
+          if (!access) return json(res, 403, { error: 'Invitation is invalid or unavailable.' });
+          if (!admit(req, access.room, input.user, input.name, res)) return;
+          const folderId = input.folderId === undefined ? access.scope : input.folderId;
+          if (input.fileId) {
+            const file = (access.room.files || []).find(item => item.id === input.fileId);
+            if (!file) return json(res, 404, { error: 'File not found.' });
+            requireFolder(access.room, file.folderId || null, access.scope);
+          } else requireFolder(access.room, folderId, access.scope);
+          for (const [key, ticket] of tickets) if (ticket.expires <= now()) tickets.delete(key);
+          if (tickets.size >= 5000) return json(res, 429, { error: 'Too many pending downloads. Try again in a minute.' });
+          const token = randomBytes(32).toString('hex');
+          tickets.set(token, { roomId: access.room.id, fileId: input.fileId, folderId, user: input.user, name: input.name, authorization: req.headers.authorization, ownerKey: req.headers['x-owner-key'], expires: now() + 60000 });
+          return json(res, 201, { url: `/api/downloads/${token}`, expiresIn: 60 });
+        }
         const filesMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9-]{36})\/files(?:\/([a-f0-9-]{36}))?$/);
         if (filesMatch) {
           const access = fileAccess(req, filesMatch[1]), room = access?.room;
           if (!room) return json(res, 403, { error: 'Invitation is invalid or unavailable on this host.' });
-          await handleFileRequest({ req, res, url, room, scope: access.scope, owner: isOwner(req, room), fileId: filesMatch[2], dataDir, save, admit: (...args) => admit(req, ...args), canAccess: () => stillAllowed(req, access, url.searchParams.get('name'), res), json, now });
+          await handleFileRequest({ req, res, url, room, scope: access.scope, owner: isOwner(req, room), fileId: filesMatch[2], dataDir, save, admit: (...args) => admit(req, ...args), canAccess: () => { if ((access.invitation && !room.folderInvitations.includes(access.invitation)) || !matchesPolicy(room.policy, identity(req, room, url.searchParams.get('name')))) throw Object.assign(new Error('Access denied: the invitation or whitelist changed during upload.'), { status: 403 }); return true; }, json, now, removeFile });
           return;
         }
         const foldersMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9-]{36})\/folders$/);
@@ -210,6 +250,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
       res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : readFileSync(resolve(root, file)));
     } catch (error) {
+      if (res.headersSent || res.destroyed) { res.destroy(); return; }
       json(res, error.status || (error.message.startsWith('Invalid') || error.message.startsWith('Conflicting') ? 400 : 500), { error: error.status || /^(Invalid|Conflicting)/.test(error.message) ? error.message : 'The host could not save this document. Your local copy is retained.' });
     }
   });
