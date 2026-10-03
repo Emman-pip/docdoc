@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, readdir
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Document } from '../public/crdt.js';
+import { manageFolders, requireFolder, inventory } from './folders.js';
 import { handleFileRequest } from './file-sharing.js';
 import { INVITATION_CODE } from '../public/invitations.js';
 import { emptyPolicy, validatePolicy, normalizeIP, normalizeMAC, lookupLanMAC, matchesPolicy } from './access-control.js';
@@ -34,7 +35,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
   }
   function save(room) {
     const path = resolve(dataDir, `${room.id}.json`);
-    writeFileSync(`${path}.tmp`, JSON.stringify({ id: room.id, token: room.token, code: room.code, ownerToken: room.ownerToken, policy: room.policy || emptyPolicy(), state: room.doc.snapshot(), files: room.files || [] }), { mode: 0o600 });
+    writeFileSync(`${path}.tmp`, JSON.stringify({ id: room.id, token: room.token, code: room.code, ownerToken: room.ownerToken, policy: room.policy || emptyPolicy(), state: room.doc.snapshot(), files: room.files || [], folders: room.folders || [], folderInvitations: room.folderInvitations || [], garbage: room.garbage || [] }), { mode: 0o600 });
     renameSync(`${path}.tmp`, path);
   }
   function load(id) {
@@ -98,6 +99,15 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
           if (!room) return json(res, 403, { error: 'Invitation is invalid or unavailable on this host.' });
           await handleFileRequest({ req, res, url, room, fileId: filesMatch[2], dataDir, save, admit: (...args) => admit(req, ...args), canAccess: () => checkAccess(req, room, url.searchParams.get('name'), res), json, now });
           return;
+        }
+        const foldersMatch = url.pathname.match(/^\/api\/rooms\/([a-f0-9-]{36})\/folders$/);
+        if (foldersMatch) {
+          const room = authorize(req, foldersMatch[1]);
+          if (!room) return json(res, 403, { error: 'Invitation is invalid or unavailable on this host.' });
+          if (!admit(req, room, url.searchParams.get('user'), url.searchParams.get('name'), res)) return;
+          if (req.method === 'GET') return json(res, 200, inventory(room));
+          if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
+          return json(res, 200, manageFolders(room, await body(req), { owner: isOwner(req, room), save }));
         }
         if (req.method !== 'POST') return json(res, 405, { error: 'Use POST' });
         const input = await body(req);
