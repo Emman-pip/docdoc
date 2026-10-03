@@ -106,6 +106,8 @@ export async function handleFileRequest({ req, res, url, room, scope = null, own
   }
   if (!reservations.has(room)) reservations.set(room, new UploadReservations());
   const quota = reservations.get(room); quota.reserve(room, key, length || 0);
+  room.activeTransfers ||= new Map();
+  room.activeTransfers.set(user, (room.activeTransfers.get(user) || 0) + 1);
   const file = { id: randomUUID(), folderId, name: filename, size: 0, uploadedBy: String(name).trim().slice(0, 40) || 'Collaborator', uploadedByIP: normalizeIP(req.socket?.remoteAddress), uploadedByUser: user, createdAt: now(), deletionHash: digest(deletionToken), uploadKey: key };
   const path = filePath(dataDir, room, file.id); let handle, committed = false;
   try {
@@ -130,8 +132,12 @@ export async function handleFileRequest({ req, res, url, room, scope = null, own
     committed = true;
     json(res, 201, { file: publicFile(file), deletionToken });
   } finally {
-    if (handle) await handle.close();
+    // Releasing capacity must not depend on a successful descriptor close.
+    try { if (handle) await handle.close(); } catch { /* Cleanup below still runs. */ }
     quota.release(key);
+    const remaining = room.activeTransfers.get(user) - 1;
+    if (remaining) room.activeTransfers.set(user, remaining); else room.activeTransfers.delete(user);
+    if (room.users.has(user)) room.users.get(user).seen = now();
     if (!committed) {
       for (const leftover of [`${path}.tmp`, path]) { try { rmSync(leftover, { force: true }); } catch { /* Unreferenced bytes cannot be downloaded. */ } }
       if (!req.destroyed) req.resume();

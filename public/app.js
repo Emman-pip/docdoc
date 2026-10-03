@@ -1,3 +1,5 @@
+import { icon, buttonLabel } from './icons.js';
+import { attachFocus, startsInPreview } from './focus.js';
 import { attachDefaults, newDocumentPolicy } from './defaults.js';
 import { generateUsername, initializeUsername } from './usernames.js';
 import { Document } from './crdt.js';
@@ -13,6 +15,7 @@ const $ = id => document.getElementById(id);
 const uuid = () => globalThis.crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; return (c === 'x' ? r : (r & 3) | 8).toString(16); });
 const actor = uuid();
 const KEY = 'docdoc.documents.v1';
+const focus = attachFocus({ button: $('focus-toggle'), body: document.body, hasDialog: () => Boolean(document.querySelector('dialog[open]')), listen: handler => document.addEventListener('keydown', handler, true) });
 let user, records = [], current, doc, history = [], syncing = false, generation = 0, composing = false;
 const notice = message => { $('notice').textContent = message; $('notice').hidden = !message; };
 $('name').value = generateUsername();
@@ -57,7 +60,7 @@ function renderList() {
     const title = record.state.title?.value || 'Untitled document';
     if (!title.toLowerCase().includes(query)) continue;
     const button = document.createElement('button');
-    button.textContent = title; button.className = record.id === current?.id ? 'active' : ''; button.title = title;
+    button.textContent = title; button.prepend(icon(record.room?.kind === 'folder' ? 'folder' : 'document')); button.className = record.id === current?.id ? 'active' : ''; button.title = title;
     button.onclick = () => open(record);
     $('documents').append(button);
   }
@@ -90,11 +93,15 @@ function updateEditor() {
   };
 }
 function open(record) {
+  focus.exit();
   generation++; syncing = false; current = record; history = [];
+  document.body.classList.toggle('folder-guest', record.room?.kind === 'folder');
+  $('title').readOnly = record.room?.kind === 'folder';
   doc = new Document(actor, record.state);
   vim.reset();
   showEditing();
   $('editor').value = doc.text(); $('title').value = doc.title.value;
+  if (startsInPreview(record) && record.room?.kind !== 'folder') $('preview-toggle').onclick();
   $('connection').textContent = record.room ? 'Connecting to your collaborators…' : 'Private document';
   $('people').textContent = 'Only you · 1 / 5';
   $('connection-dot').classList.remove('offline');
@@ -115,7 +122,7 @@ async function request(path, input, token, ownerToken) {
   return result;
 }
 async function sync() {
-  if (!current?.room || syncing || composing) return;
+  if (!current?.room || current.room.kind === 'folder' || syncing || composing) return;
   const selected = current, selectedDoc = doc, version = generation;
   syncing = true;
   try {
@@ -165,7 +172,7 @@ function undo() {
 $('undo').onclick = undo;
 function showEditing() {
   $('preview').hidden = true; $('editor').hidden = false;
-  $('preview-toggle').setAttribute('aria-pressed', 'false'); $('preview-toggle').textContent = 'Preview';
+  $('preview-toggle').setAttribute('aria-pressed', 'false'); buttonLabel($('preview-toggle'), 'Preview');
   if (doc) renderPhotos();
   editorSize.fit();
   vimCursor.update();
@@ -234,7 +241,7 @@ $('preview-toggle').onclick = () => {
   const show = $('preview').hidden;
   $('preview').hidden = !show; $('editor').hidden = show;
   $('preview-toggle').setAttribute('aria-pressed', String(show));
-  $('preview-toggle').textContent = show ? 'Edit' : 'Preview';
+  buttonLabel($('preview-toggle'), show ? 'Edit' : 'Preview');
   preview(); renderPhotos(); editorSize.fit(); vimCursor.update();
 };
 $('export').onclick = () => {
@@ -246,7 +253,7 @@ let creatingRoom;
 async function ensureRoom(selected = current) {
   if (selected.room) return selected.room;
   if (creatingRoom?.record === selected) return creatingRoom.promise;
-  const selectedDoc = doc;
+  const selectedDoc = selected === current ? doc : new Document(actor, selected.state);
   const promise = request('/api/rooms', { state: selectedDoc.snapshot(), policy: selected.policy }).then(room => {
     selected.room = room;
     if (selected === current) { persist(); sync(); }
@@ -255,7 +262,7 @@ async function ensureRoom(selected = current) {
   creatingRoom = { record: selected, promise };
   try { return await promise; } finally { if (creatingRoom?.promise === promise) creatingRoom = null; }
 }
-const fileSharing = attachFileSharing({ $, user, getCurrent: () => current, getName: () => $('name').value, ensureRoom });
+const fileSharing = attachFileSharing({ $, user, getCurrent: () => current, getName: () => $('name').value, ensureRoom, exitFocus: () => focus.exit() });
 attachDefaults($);
 attachAccessControls({ $, getCurrent: () => current, getName: () => $('name').value, ensureRoom, persist, sync });
 $('share').onclick = async () => {
@@ -289,20 +296,21 @@ $('delete').onclick = () => {
   const removed = current;
   records = records.filter(record => record.id !== removed.id);
   try { localStorage.setItem(KEY, JSON.stringify(records)); } catch { notice('Could not delete from browser storage.'); return; }
-  if (removed.room) request(`/api/rooms/${removed.room.id}/leave`, { user, name: $('name').value }, removed.room.token, removed.room.ownerToken).catch(() => {});
+  if (removed.room && removed.room.kind !== 'folder') request(`/api/rooms/${removed.room.id}/leave`, { user, name: $('name').value }, removed.room.token, removed.room.ownerToken).catch(() => {});
   if (records.length) open(records[0]); else create();
 };
 function openInvitation(room) {
   let record = records.find(item => item.room?.id === room.id && item.room?.token === room.token);
-  if (!record) { record = { id: uuid(), state: new Document(actor).snapshot(), updated: Date.now(), room }; records.push(record); }
+  if (!record) { const initial = new Document(actor); if (room.kind === 'folder') initial.rename('Shared folder'); record = { id: uuid(), state: initial.snapshot(), updated: Date.now(), room, joined: true }; records.push(record); }
   else record.room = { ...record.room, ...room };
+  record.joined = true;
   open(record); persist();
   window.history.replaceState(null, '', '/');
 }
 async function joinCode(value) {
   const code = normalizeCode(value), selectedGeneration = generation, selectedClock = doc.clock;
   const local = records.find(record => record.room?.code === code);
-  const room = local?.room || await request('/api/invitations/join', { code, name: $('name').value });
+  const room = local?.room || await request('/api/invitations/join', { code, name: $('name').value, user });
   if (generation !== selectedGeneration || doc.clock !== selectedClock) throw new Error('The document changed while joining. Enter the invitation code again.');
   openInvitation(room);
 }

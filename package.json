@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "start": "node src/server.js", "dev": "node --watch src/server.js", "test": "node --test", "check": "node --check src/server.js && node --check public/app.js && node --check public/crdt.js && node --check public/vim.js && node --check public/images.js && node --check public/markdown.js && node --check public/sw.js && node --check public/files.js && node --check src/file-sharing.js && node --check public/vim-cursor.js && node --check public/invitations.js && node --check public/access.js && node --check src/access-control.js && node --check public/editor-size.js && node --check public/usernames.js" },
-  "engines": { "node": ">=20" }
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "check": "node scripts/check.mjs",
+    "test:browser": "node scripts/browser-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }

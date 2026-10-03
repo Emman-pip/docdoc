@@ -15,9 +15,21 @@ Open **http://localhost:3000**. For collaborators, open `http://<host-LAN-IP>:30
 ```sh
 PORT=8080 HOST=0.0.0.0 npm start
 npm run dev   # Restart the server when source files change
-npm test      # CRDT and server request-handler integration tests
+npm test      # CRDT, access, transfers, and UI unit/integration tests
 npm run check # JavaScript syntax checks
 ```
+
+No dependency installation is needed: a fresh checkout is ready after installing Node.js. There is no generated build output; the host serves `public/` directly. `.editorconfig` records the existing two-space JavaScript conventions. `npm run check` checks every JavaScript source, script, and test.
+
+For browser verification, install Chromium using your OS package manager, then run:
+
+```sh
+npm run test:browser
+# If Chromium has a different executable path:
+CHROMIUM=/path/to/chromium npm run test:browser
+```
+
+This opens an isolated headless browser and a temporary local server, exercises light/dark/mobile layouts and collaboration flows, and updates `docs/screenshots/`. It requires permission to bind a loopback port and launch Chromium. It never uses the host's `data/` or your browser profile.
 
 ## Run with Docker at boot (Linux)
 
@@ -50,6 +62,8 @@ docker compose up -d --build # Rebuild and run after application changes
 
 To use another port, run `DOCDOC_PORT=8080 docker compose up -d`. Use the same port override when recreating the container. Host networking makes the configured port available directly on the Linux host; choose an unused port. Docker's health check reports whether the application responds; the restart policy restarts exited processes rather than unhealthy containers.
 
+Large transfers stream through `data/files/<session-id>/` on the bind mount. Allow at least 1 GiB of disk space per full session, plus snapshots and operational headroom. Run one DocDoc process per data directory so in-memory admission and upload reservations remain authoritative. Uploads have no fixed request-body timeout; keep reverse-proxy body limits at least **1,073,741,824 bytes**, disable request/response buffering for file routes, and allow enough transfer time for your LAN. ZIP downloads are streamed without a precomputed Content-Length. No extra Docker ports or dependencies are needed.
+
 ## Use the workspace
 
 - Create and rename documents from the sidebar; search by title.
@@ -57,9 +71,16 @@ To use another port, run `DOCDOC_PORT=8080 docker compose up -d`. Use the same p
 - Changes autosave in this browser. Export a `.md` file for a portable backup, including embedded photos.
 - Enter your display name, select **Share document**, and copy the short invitation link or its code, such as `xyz-jnk-dvc`. Use the host’s LAN address instead of localhost when inviting another device.
 - Open the invitation link, or select **Join with code** on the same LAN host and enter the code. Codes persist across host restarts; existing long invitation links still work.
-- Anyone with the invitation link or code can edit unless an enabled session whitelist blocks their connection. Keep invitations within your intended group.
-- The server rejects a sixth active user. Multiple tabs in one browser profile share a user identity and consume one place. Inactive places expire after 15 seconds.
+- Joined documents open in **Preview**, including when reopened from the sidebar. Select **Edit** to write. Locally created documents start in editing mode.
+- Anyone with the document invitation link or code can edit unless an enabled session whitelist blocks their connection. Keep invitations within your intended group.
+- The server rejects a sixth active user. Multiple tabs in one browser profile share a user identity and consume one place. Inactive places expire after 15 seconds; an upload in progress retains its place.
 - If the host disappears, continue editing the already-open page. Changes merge automatically when it returns.
+
+## Default access list
+
+Select **Default access list** in the sidebar to save an optional template in this browser. It starts disabled and uses the same IP, username, and detectable-MAC matching rules as session Access. New local documents copy the current template at creation, including offline. Later template changes affect future documents only; existing and joined documents keep their policies. When a local document first creates a host session, the host validates and saves its inherited policy atomically with the initial document snapshot. There is no unrestricted interval before policy application.
+
+Invalid entries show an error; failed template saves retain the previous stored settings. Existing documents without an inherited policy continue to create sessions with the whitelist disabled. The session owner retains the usual access override and can change individual sessions with **Access**.
 
 ## Session whitelists
 
@@ -80,6 +101,10 @@ New browser profiles receive a random default name such as `GuiltyPride0239`, sa
 ## Appearance
 
 The app automatically follows your system’s light or dark theme, including the editor, file panel, dialogs, and native controls. Changes to the system theme apply without reloading. The Markdown editor expands to display the entire document; long documents scroll with the page rather than inside the editor.
+
+Select **Focus mode** in editing or preview to hide the sidebar and surrounding workspace while retaining the title, view switch, and essential controls. **Exit focus mode** or Escape returns to the workspace. Escape closes an open dialog first; switching documents or opening file sharing also exits focus. Browser chrome remains visible. Icons are bundled SVG symbols using the current text color and accessible button labels, including when labels change.
+
+Screenshots: [focus mode](docs/screenshots/focus-light.png), [dark file panel](docs/screenshots/folders-dark.png), [folder guest](docs/screenshots/folder-guest-light.png), and [mobile focus](docs/screenshots/focus-mobile.png).
 
 ## Optional Vim bindings
 
@@ -109,11 +134,43 @@ Export replaces internal photo references with embedded data URLs. Use a Markdow
 
 ## File-sharing mode
 
-Select **File sharing** beside **Text editor** to share arbitrary files with this document’s collaborators. Select **Upload file** to create a shared session if needed, then use **Share document** to copy its invitation. People joining through that link can open the File sharing panel and download the files.
+Select **File sharing** beside **Text editor**. Use **New folder**, **Upload files**, or **Upload folder** to start a shared session if needed. Breadcrumbs navigate nested folders. The session owner can rename and move folders, move files with the destination picker, and delete empty folders. Folder names must be unique within a parent; duplicate filenames are allowed and their IDs distinguish them.
 
-Files are stored separately on the LAN host, with limits of **20 MB per file**, **100 MB per session**, and **20 files per session**. The same invitation checks and five-user admission limit apply to text and files. Files persist across host restarts and are delivered as downloads, including HTML and executable file types. Each file displays its original uploader’s name and connection IP, recorded at upload time and preserved across host restarts. Older uploads show “IP not recorded.” The list refreshes while the panel is open; select Refresh files to check immediately.
+Files have limits of **1 GiB (1,073,741,824 bytes) per file**, **1 GiB total per document session**, and **1,000 files per session**. Folders do not count as files; a separate 5,000-folder metadata cap applies. Uploads stream into temporary files and reserve capacity so concurrent requests cannot exceed limits. Folder uploads preserve relative paths and run sequentially after a size/count preflight. Progress shows completed, failed, and cancelled uploads. **Retry unfinished uploads** skips completed files and reuses private upload keys to avoid duplicates after a lost response. Keep the page open to retain its retry queue; closing it discards the queue. Folder selection exposes files and their relative paths; create empty folders explicitly with **New folder**.
 
-File uploads and downloads require the LAN host to be online. File bytes are not copied into browser autosave, document Markdown exports, or the offline application cache. Back up `data/files/` along with the host’s document snapshots. Sessions that reach their quota need a new document/session for additional uploads.
+Each file shows its original uploader's name and connection IP, preserved across restarts. Older uploads show “IP not recorded.” The session owner can delete any file after confirmation. The original uploading browser can delete new uploads using its private deletion credential, saved separately in local storage and never exposed by file listings. Clearing that storage loses uploader deletion rights; the owner can still delete. Legacy files without deletion credentials are owner-deletable only. Deleting immediately removes metadata and releases quota. If the filesystem refuses byte deletion, the host records cleanup work and retries when the room is loaded or files are requested.
+
+**Download folder** streams a ZIP of the selected folder and its descendants, including empty folders. Duplicate filenames are disambiguated in ZIPs using file IDs. Downloads use short-lived, single-use tickets and the browser's download manager; the page does not allocate a file-sized Blob. Tickets expire after 60 seconds, disappear on host restart, and recheck current invitation scope and whitelist rules on redemption. Start the download again if a ticket expires or has already been used.
+
+### Independent folder invitations
+
+Open a folder as the session owner, then select **Folder invitations** to create or revoke short codes. Copy the code or link to a guest. Each code permits browsing, downloading, uploading, and subfolder creation within that folder and its descendants. Guests receive a **file-only workspace**: their credentials cannot read document content, document invitations, owner keys, sibling folders, or ancestor metadata. Owner-only rename/move/delete controls are hidden; an uploader can still delete their own uploads with the private key.
+
+Folder guests obey the document whitelist and share the same five-user admission limit with document collaborators. Revocation blocks subsequent requests, including download tickets and uploads still being received. Moving a file outside a guest's scope also blocks later downloads. Already downloaded copies cannot be recalled. The owner can recover older owner keys through the existing **Access** workflow.
+
+### Host data and compatibility
+
+Back up **all of `data/`**, including JSON snapshots and `data/files/`, before updating the host. Existing document snapshots, CRDT migration, document invitations, and root-file endpoints remain compatible. Missing folder metadata defaults to an empty hierarchy; old files appear at the root without rewriting original uploader details. New snapshots additionally persist folder IDs/names/parent IDs, optional file folder IDs, private deletion hashes, folder invitations, and pending cleanup IDs. File bytes retain opaque UUID filenames; user-provided names are never disk paths.
+
+Interrupted temporary uploads are cleaned on restart. Failed or cancelled uploads release their reservations; completed files remain if later files fail. File bytes and folder metadata require the LAN host online and are not included in browser document autosave, Markdown exports, or the service-worker cache. Core editing and saved default-access templates remain local-first.
+
+### File API
+
+All room routes require `Authorization: Bearer <document-or-folder-token>`. File and folder routes use `?user=<browser-id>&name=<display-name>`; owner actions also require `X-Owner-Key`. Document-only routes never accept folder credentials.
+
+| Route | Behavior |
+| --- | --- |
+| `POST /api/rooms` | Accepts document `state` and optional validated `policy`, saved together |
+| `GET /api/rooms/:id/files` | Scoped files/folders, quota totals, and limits; legacy files remain at root |
+| `POST /api/rooms/:id/files?folder=<id>` | Raw streaming body, percent-encoded `X-File-Name`, optional 64-hex `X-Upload-Key`; returns private `deletionToken` only to uploader |
+| `GET /api/rooms/:id/files/:file` | Compatible authenticated streaming download |
+| `PATCH /api/rooms/:id/files/:file?folder=<id>` | Owner moves a file; empty folder parameter means root |
+| `DELETE /api/rooms/:id/files/:file` | Owner or private `X-Deletion-Key` holder deletes a scoped file |
+| `GET/POST /api/rooms/:id/folders` | Scoped inventory or `{action: create/rename/move/delete, name, id, parentId}` |
+| `POST /api/rooms/:id/folder-invitations` | Owner `{action: create/list/revoke, folderId, code}` |
+| `POST /api/invitations/join` | `{code, user, name}`; folder result has `kind: "folder"` and scoped credentials |
+| `POST /api/rooms/:id/download-tickets` | `{user, name, fileId}` or `{user, name, folderId}`; returns a native download URL |
+| `GET /api/downloads/:ticket` | Single-use streaming file or ZIP after current-access checks |
 
 ## Offline behavior and storage
 
@@ -125,8 +182,10 @@ A service worker caches the application after the first visit on **localhost or 
 
 - `public/`: responsive browser UI, editor, optional Vim bindings, photo processing and preview, character CRDT, and offline cache worker.
 - `src/server.js`: Node HTTP server, invitation checks, participant admission, synchronization, and atomic snapshot persistence.
-- `src/access-control.js`: whitelist validation, peer-address matching, and Linux ARP-based MAC detection.
-- `src/file-sharing.js`: binary file transfers, session quotas, and persistent file metadata.
+- `public/policy.js` and `src/access-control.js`: shared policy validation, peer-address matching, and Linux ARP-based MAC detection.
+- `src/file-sharing.js`, `src/folders.js`, and `src/zip.js`: streaming transfers, quota reservations, deletion, hierarchy checks, and ZIP generation.
+- `public/icons.svg`: bundled icon assets; `public/focus.js` and `public/defaults.js`: focused views and browser access templates.
+- `scripts/`: syntax checks and isolated Chromium smoke verification; `docs/screenshots/`: UI validation artifacts.
 - `tests/`: concurrent-edit convergence, duplicate/reordered delivery, authorization, five-user capacity, reconnection, and restart persistence checks. Server tests invoke the real request listener without opening TCP sockets.
 - `docs/application-plan.md`: product scope and delivery plan.
 
@@ -134,6 +193,6 @@ The CRDT merges immutable character insertions and deletion tombstones; document
 
 ## Current scope
 
-This is a text-document MVP with basic Markdown formatting, not full Word or Excel compatibility. Spreadsheets, view-only permissions, invitation-code revocation, host migration, and authenticated accounts are future work. Invitation links and short codes act as edit credentials; identities are browser-generated rather than authenticated accounts. The host enforces five distinct presented user identities, not verified people.
+This is a text-document MVP with basic Markdown formatting, not full Word or Excel compatibility. Spreadsheets, view-only permissions, document-invitation revocation, host migration, and authenticated accounts are future work. Invitation links and short codes act as edit credentials; identities are browser-generated rather than authenticated accounts. The host enforces five distinct presented user identities, not verified people.
 
 Synchronization accepts up to 2 MB of serialized CRDT state, including edit history. This version is intended for small documents; export a backup if storage or sync limits are reached. Undo reverses local text edits; it does not provide a full document revision history. Markdown preview supports a small formatting subset and uploaded raster photos; it does not render arbitrary HTML or fetch external Markdown images.

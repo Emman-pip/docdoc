@@ -1,5 +1,5 @@
-const CACHE = 'docdoc-v7';
-const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/crdt.js', '/vim.js', '/images.js', '/markdown.js', '/files.js', '/vim-cursor.js', '/invitations.js', '/access.js', '/editor-size.js', '/usernames.js'];
+const CACHE = 'docdoc-v8';
+const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/crdt.js', '/vim.js', '/images.js', '/markdown.js', '/files.js', '/vim-cursor.js', '/invitations.js', '/access.js', '/editor-size.js', '/usernames.js', '/policy.js', '/defaults.js', '/icons.js', '/icons.svg', '/focus.js'];
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', event => {

@@ -87,7 +87,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
   function admit(req, room, user, name, res) {
     if (!checkAccess(req, room, name, res)) return false;
     if (typeof user !== 'string' || !/^[a-zA-Z0-9-]{1,64}$/.test(user)) { json(res, 400, { error: 'Invalid user identity' }); return false; }
-    for (const [id, participant] of room.users) if (now() - participant.seen > 15000) room.users.delete(id);
+    for (const [id, participant] of room.users) if (now() - participant.seen > 15000 && !room.activeTransfers?.get(id)) room.users.delete(id);
     if (!room.users.has(user) && room.users.size >= 5) { json(res, 409, { error: 'This document is full. Five users are already collaborating.' }); return false; }
     room.users.set(user, { ...identity(req, room, name), seen: now() });
     return true;
@@ -176,7 +176,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
           const attempt = attempts.get(address) || { started: now(), count: 0 };
           if (attempt.count >= 10) return json(res, 429, { error: 'Too many incorrect invitation codes. Try again in a minute.' });
           const entry = invitations.get(code), room = entry && load(typeof entry === 'string' ? entry : entry.id);
-          const folderInvite = room && typeof entry === 'object' && (room.folderInvitations || []).find(invite => invite.token === entry.token);
+          const folderInvite = room && typeof entry === 'object' && (room.folderInvitations || []).find(invite => invite.token === entry.token && (room.folders || []).some(folder => folder.id === invite.folderId));
           if (!room || (typeof entry === 'object' && !folderInvite)) {
             attempt.count++; if (attempts.size < 1000 || attempts.has(address)) attempts.set(address, attempt);
             return json(res, 404, { error: 'Invitation code was not found on this LAN host.' });
@@ -229,7 +229,7 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
         if (!checkAccess(req, room, input.name, res)) return;
         if (match[2] === 'invitation') return json(res, 200, addCode(room));
         if (typeof input.user !== 'string' || !/^[a-zA-Z0-9-]{1,64}$/.test(input.user)) return json(res, 400, { error: 'Invalid user identity' });
-        for (const [id, user] of room.users) if (now() - user.seen > 15000) room.users.delete(id);
+        for (const [id, user] of room.users) if (now() - user.seen > 15000 && !room.activeTransfers?.get(id)) room.users.delete(id);
         if (match[2] === 'leave') { room.users.delete(input.user); return json(res, 200, { ok: true }); }
         if (!room.users.has(input.user) && room.users.size >= 5) return json(res, 409, { error: 'This document is full. Five users are already collaborating.' });
         const candidate = new Document('server', room.doc.snapshot());
@@ -243,10 +243,10 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
         return json(res, 200, { state: room.doc.snapshot(), users: [...room.users].map(([id, user]) => ({ id, name: user.name })), limit: 5 });
       }
       if (!['GET', 'HEAD'].includes(req.method)) return json(res, 405, { error: 'Method not allowed' });
-      const files = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/crdt.js': 'crdt.js', '/styles.css': 'styles.css', '/sw.js': 'sw.js', '/vim.js': 'vim.js', '/images.js': 'images.js', '/markdown.js': 'markdown.js', '/files.js': 'files.js', '/vim-cursor.js': 'vim-cursor.js', '/invitations.js': 'invitations.js', '/access.js': 'access.js', '/editor-size.js': 'editor-size.js', '/usernames.js': 'usernames.js', '/policy.js': 'policy.js', '/defaults.js': 'defaults.js' };
+      const files = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/crdt.js': 'crdt.js', '/styles.css': 'styles.css', '/sw.js': 'sw.js', '/vim.js': 'vim.js', '/images.js': 'images.js', '/markdown.js': 'markdown.js', '/files.js': 'files.js', '/vim-cursor.js': 'vim-cursor.js', '/invitations.js': 'invitations.js', '/access.js': 'access.js', '/editor-size.js': 'editor-size.js', '/usernames.js': 'usernames.js', '/policy.js': 'policy.js', '/defaults.js': 'defaults.js', '/icons.js': 'icons.js', '/icons.svg': 'icons.svg', '/focus.js': 'focus.js' };
       const file = INVITATION_CODE.test(url.pathname.slice(1)) ? 'index.html' : files[url.pathname];
       if (!file) return json(res, 404, { error: 'Not found' });
-      const type = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html';
+      const type = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
       res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'no-cache' });
       res.end(req.method === 'HEAD' ? undefined : readFileSync(resolve(root, file)));
     } catch (error) {
@@ -254,6 +254,8 @@ export function createApp({ dataDir = resolve('data'), now = Date.now, lookupMAC
       json(res, error.status || (error.message.startsWith('Invalid') || error.message.startsWith('Conflicting') ? 400 : 500), { error: error.status || /^(Invalid|Conflicting)/.test(error.message) ? error.message : 'The host could not save this document. Your local copy is retained.' });
     }
   });
+  // Large LAN uploads may legitimately take longer than Node’s five-minute default.
+  server.requestTimeout = 0;
   return server;
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

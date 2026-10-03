@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createApp } from '../src/server.js';
 import { UploadReservations, MAX_ROOM_BYTES, MAX_FILE_BYTES } from '../src/file-sharing.js';
 import { zipEntries, crc32 } from '../src/zip.js';
-import { fixture } from './folder-invitations.test.js';
+import { fixture } from './folder-fixture.js';
 import { request } from './request-helper.js';
 const upload = (f, name = 'file.txt', options = {}) => request(f.server, `${f.base}/files?user=guest&name=Alice&folder=${f.folder.id}`, { method: 'POST', headers: { ...f.guestHeaders, 'X-File-Name': encodeURIComponent(name), ...options.headers }, rawBody: 'hello', ...options, ...(options.headers ? { headers: { ...f.guestHeaders, 'X-File-Name': encodeURIComponent(name), ...options.headers } } : {}) });
 test('quota reserves concurrent bytes and file slots with exact boundaries and releases failures', () => {
@@ -81,4 +81,39 @@ test('ZIP streams the selected tree, preserves empty folders, and disambiguates 
   }
   assert.equal(new Set(names).size, 4); assert.ok(names.includes('Shared/Empty/')); assert.equal(names.some(name => name.includes('Private parent')), false); assert.deepEqual(contents.filter(Boolean), ['hello', 'hello']);
   assert.throws(() => zipEntries({ folders: [], files: [{ name: '../escape', size: 0 }] }, null), /Invalid name/);
+});
+
+test('long uploads retain their admission slot until cancellation or completion', async t => {
+  let now = 1000; const f = await fixture(t, { now: () => now });
+  let ready, release; const started = new Promise(resolve => ready = resolve), gate = new Promise(resolve => release = resolve);
+  async function* chunks() { ready(); await gate; yield Buffer.from('long transfer'); }
+  const pending = upload(f, 'long.txt', { rawChunks: chunks() }); await started; now += 30000;
+  for (let i = 0; i < 4; i++) assert.equal((await request(f.server, `${f.base}/files?user=active${i}`, { headers: f.headers })).status, 200);
+  assert.equal((await request(f.server, `${f.base}/files?user=sixth`, { headers: f.headers })).status, 409);
+  release(); assert.equal((await pending).status, 201);
+});
+
+test('HTTP uploads reserve declared bytes concurrently without allocating GiB buffers', async t => {
+  const f = await fixture(t), initial = await (await upload(f)).json();
+  const snapshot = join(f.dataDir, f.room.id + '.json'), stored = JSON.parse(readFileSync(snapshot));
+  stored.files[0].size = MAX_ROOM_BYTES - 1; writeFileSync(snapshot, JSON.stringify(stored));
+  f.server = createApp({ dataDir: f.dataDir });
+  let ready, release; const started = new Promise(resolve => ready = resolve), gate = new Promise(resolve => release = resolve);
+  async function* chunks() { ready(); await gate; yield Buffer.from('x'); }
+  const pending = upload(f, 'last-byte', { headers: { 'Content-Length': '1' }, rawChunks: chunks() }); await started;
+  assert.equal((await upload(f, 'concurrent', { headers: { 'Content-Length': '1' }, rawBody: 'x' })).status, 413);
+  release(); assert.equal((await pending).status, 201);
+  assert.equal((await upload(f, 'chunked', { rawBody: 'x' })).status, 413);
+  assert.equal((await request(f.server, `${f.base}/files/${initial.file.id}?user=owner`, { method: 'DELETE', headers: f.headers })).status, 200);
+  assert.equal((await upload(f, 'capacity-released', { rawBody: 'x' })).status, 201);
+});
+
+test('a descendant moved outside the invitation while receiving an upload fails the final scope check', async t => {
+  const f = await fixture(t);
+  const child = (await (await f.call('folders', { action: 'create', name: 'Child', parentId: f.folder.id })).json()).folder;
+  let ready, release; const started = new Promise(resolve => ready = resolve), gate = new Promise(resolve => release = resolve);
+  async function* chunks() { ready(); await gate; yield Buffer.from('secret'); }
+  const pending = request(f.server, `${f.base}/files?user=guest&folder=${child.id}`, { method: 'POST', headers: { ...f.guestHeaders, 'X-File-Name': 'moved.txt' }, rawChunks: chunks() }); await started;
+  await f.call('folders', { action: 'move', id: child.id, parentId: null }); release();
+  assert.equal((await pending).status, 403); assert.deepEqual(readdirSync(join(f.dataDir, 'files', f.room.id)), []);
 });
