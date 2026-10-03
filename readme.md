@@ -1,6 +1,31 @@
 # DocDoc Offline
 
-A local-first, web-based text workspace for LAN collaboration. Create documents, write in Markdown, preview formatting, and invite up to **five simultaneous users per document**, including yourself.
+DocDoc Offline is a self-hosted, local-first workspace for writing Markdown documents and sharing files with people on the same local network. It is designed for teams that want a simple collaborative space without relying on a cloud account or internet connection for everyday editing.
+
+Documents are saved in each browser and can be edited offline. When you share a document, a DocDoc host stores a durable copy and synchronizes changes with invited collaborators. A character-based CRDT merges concurrent edits and catches up after temporary disconnections. Each document supports up to **five active browser-profile identities**, including the owner. The workspace also includes Markdown preview, embedded photos, optional Vim-style editing, and a separate shared-files area with folders and scoped folder invitations.
+
+DocDoc is currently a focused text-document MVP. It does not provide full Microsoft Word or Excel compatibility, spreadsheets, authenticated user accounts, or internet-scale cloud hosting. Invitations grant editing access; display names are labels rather than verified identities. See the [technical specification](docs/technical-specification.md) and [CRDT domain guide](docs/crdt-domain-guide.md) for the system model and collaboration details.
+
+## Use cases
+
+- **Draft together on a local network:** invite a small group to edit meeting notes, plans, procedures, or project documentation. Concurrent changes merge, and an interrupted connection can catch up later.
+- **Keep working through an outage:** continue editing a document already open in the browser when the host or network is unavailable. Changes are saved locally and synchronize when the host returns.
+- **Share a private team document:** distribute a short invitation code on a trusted LAN, optionally restrict the session with an IP, username, or detectable MAC address allowlist, and keep the shared copy on a self-hosted machine.
+- **Collect and distribute project files:** use the document's separate file-sharing area for uploads, organized folders, streamed downloads, and ZIP folder downloads. Give guests access to one folder subtree without granting access to the document text.
+- **Write and review lightweight Markdown:** use editing shortcuts, preview formatting, add embedded photos, then export a portable `.md` document.
+- **Run a small self-hosted workspace:** keep room snapshots and shared-file bytes on a machine you control, back up its `data/` directory, and serve it to devices on the LAN.
+
+These use cases assume collaborators can reach the same host. Offline editing works for browser-local documents; shared file bytes require the host to be available.
+
+## Screenshots
+
+| Focused document editing | Dark theme with shared folders |
+| --- | --- |
+| ![DocDoc in focus mode with the surrounding workspace hidden](docs/screenshots/focus-light.png) | ![DocDoc file-sharing view in dark theme with folders](docs/screenshots/folders-dark.png) |
+
+| Mobile focus mode | Folder guest workspace |
+| --- | --- |
+| ![DocDoc focus mode on a narrow mobile screen](docs/screenshots/focus-mobile.png) | ![Scoped file-sharing workspace opened through a folder invitation](docs/screenshots/folder-guest-light.png) |
 
 ## Run locally
 
@@ -104,8 +129,6 @@ The app follows your system’s light or dark theme by default, including the ed
 
 Select **Focus mode** in editing or preview to hide the sidebar and surrounding workspace while retaining the title, view switch, and essential controls. **Exit focus mode** or Escape returns to the workspace. Escape closes an open dialog first; switching documents or opening file sharing also exits focus. Browser chrome remains visible. Icons are bundled SVG symbols using the current text color and accessible button labels, including when labels change.
 
-Screenshots: [focus mode](docs/screenshots/focus-light.png), [dark file panel](docs/screenshots/folders-dark.png), [folder guest](docs/screenshots/folder-guest-light.png), and [mobile focus](docs/screenshots/focus-mobile.png).
-
 ## Optional Vim bindings
 
 Select **Vim** in the toolbar to enable the bindings. The preference is saved in this browser; regular typing is the default. A visible bar above the editor shows Normal, Insert, or Visual mode and a shortcut hint. The mode dropdown lets you switch without remembering shortcuts. Enabling Vim, restoring its saved preference, or opening another document starts in **Insert mode**, so you can type immediately. Press `Esc` for Normal mode, and `i` or choose Insert to resume typing. A solid, nonblinking caret marks the current position in all Vim modes while the editor is focused. It follows keyboard movement and wrapping; Visual mode also highlights the selection.
@@ -188,6 +211,8 @@ A service worker caches the application after the first visit on **localhost or 
 - `scripts/`: syntax checks and isolated Chromium smoke verification; `docs/screenshots/`: UI validation artifacts.
 - `tests/`: concurrent-edit convergence, duplicate/reordered delivery, authorization, five-user capacity, reconnection, and restart persistence checks. Server tests invoke the real request listener without opening TCP sockets.
 - `docs/application-plan.md`: product scope and delivery plan.
+- `docs/technical-specification.md`: implemented architecture, domain model, protocol, trust boundaries, persistence, and operational limits.
+- `docs/crdt-domain-guide.md`: CRDT concepts explained against DocDoc's concrete sequence, title, image, merge, and sync behavior.
 
 The CRDT merges immutable character insertions and deletion tombstones; document titles use Lamport timestamps. Clients exchange complete state every two seconds. The server checks invitations and available places before merging or returning content. A browser profile has one user identity; each tab has a separate editing actor.
 
