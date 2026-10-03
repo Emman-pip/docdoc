@@ -1,5 +1,6 @@
 import { icon, buttonLabel } from './icons.js';
 import { attachFocus, startsInPreview } from './focus.js';
+import { initializeTheme } from './theme.js';
 import { attachDefaults, newDocumentPolicy } from './defaults.js';
 import { generateUsername, initializeUsername } from './usernames.js';
 import { Document } from './crdt.js';
@@ -12,6 +13,7 @@ import { renderMarkdown } from './markdown.js';
 import { attachFileSharing } from './files.js';
 import { attachAccessControls } from './access.js';
 const $ = id => document.getElementById(id);
+initializeTheme($('theme-toggle'));
 const uuid = () => globalThis.crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; return (c === 'x' ? r : (r & 3) | 8).toString(16); });
 const actor = uuid();
 const KEY = 'docdoc.documents.v1';

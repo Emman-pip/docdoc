@@ -100,7 +100,7 @@ New browser profiles receive a random default name such as `GuiltyPride0239`, sa
 
 ## Appearance
 
-The app automatically follows your system’s light or dark theme, including the editor, file panel, dialogs, and native controls. Changes to the system theme apply without reloading. The Markdown editor expands to display the entire document; long documents scroll with the page rather than inside the editor.
+The app follows your system’s light or dark theme by default, including the editor, file panel, dialogs, and native controls. Use the theme toggle at the top right to switch modes; your choice is saved in this browser and applies across reloads. The Markdown editor expands to display the entire document; long documents scroll with the page rather than inside the editor.
 
 Select **Focus mode** in editing or preview to hide the sidebar and surrounding workspace while retaining the title, view switch, and essential controls. **Exit focus mode** or Escape returns to the workspace. Escape closes an open dialog first; switching documents or opening file sharing also exits focus. Browser chrome remains visible. Icons are bundled SVG symbols using the current text color and accessible button labels, including when labels change.
 
