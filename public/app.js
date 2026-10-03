@@ -247,6 +247,17 @@ $('preview-toggle').onclick = () => {
   buttonLabel($('preview-toggle'), show ? 'Edit' : 'Preview');
   preview(); renderPhotos(); editorSize.fit(); vimCursor.update();
 };
+document.addEventListener('keydown', event => {
+  if (event.key !== 'F8' || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+  if (document.querySelector('dialog[open]') || !$('files-panel').hidden || document.body.classList.contains('folder-guest')) return;
+  const target = event.target;
+  if (target.closest?.('input, textarea, select, [contenteditable="true"]') && target !== $('editor')) return;
+  event.preventDefault();
+  event.stopPropagation();
+  $('preview-toggle').click();
+  if ($('preview').hidden) $('editor').focus();
+  else $('preview-toggle').focus();
+}, true);
 $('export').onclick = () => {
   const url = URL.createObjectURL(new Blob([exportMarkdown(doc.text(), doc.images)], { type: 'text/markdown;charset=utf-8' }));
   const link = document.createElement('a'); link.href = url; link.download = `${doc.title.value.replace(/[^\p{L}\p{N} _-]/gu, '').trim() || 'document'}.md`; link.click();

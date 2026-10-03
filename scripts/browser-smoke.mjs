@@ -56,6 +56,10 @@ const screenshot = async (page, name) => {
 try {
   const owner = await page();
   assert.equal(await owner.evaluate("document.querySelector('#preview').hidden"), true);
+  await owner.evaluate("document.querySelector('#editor').focus()");
+  assert.equal(await owner.evaluate("(() => { const event = new KeyboardEvent('keydown', { key: 'F8', bubbles: true, cancelable: true }); document.activeElement.dispatchEvent(event); return event.defaultPrevented && !document.querySelector('#preview').hidden; })()"), true);
+  assert.equal(await owner.evaluate("(() => { const events = ['f', 'p'].map(key => new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true })); events.forEach(event => document.activeElement.dispatchEvent(event)); return events.every(event => !event.defaultPrevented) && !document.querySelector('#preview').hidden; })()"), true);
+  assert.equal(await owner.evaluate("(() => { const event = new KeyboardEvent('keydown', { key: 'F8', bubbles: true, cancelable: true }); document.activeElement.dispatchEvent(event); return event.defaultPrevented && document.querySelector('#preview').hidden && document.activeElement === document.querySelector('#editor'); })()"), true);
   await owner.evaluate("document.querySelector('#defaults-open').click(); document.querySelector('#defaults-users').value='Alice'; document.querySelector('#defaults-enabled').checked=true; document.querySelector('#defaults-save').click()");
   assert.match(await owner.evaluate("document.querySelector('#defaults-status').textContent"), /Saved/);
   await owner.evaluate("document.querySelector('#defaults-dialog').close(); document.querySelector('#new').click(); document.querySelector('#title').value='Team notes'; document.querySelector('#title').dispatchEvent(new Event('input')); document.querySelector('#editor').value='# Meeting notes\\n\\nPrivate document content.'; document.querySelector('#editor').dispatchEvent(new Event('input'))");
@@ -121,7 +125,7 @@ try {
   assert.equal(await owner.evaluate("JSON.parse(localStorage.getItem('docdoc.access-defaults.v1')).enabled"), false);
   assert.equal(await owner.evaluate("JSON.parse(localStorage.getItem('docdoc.documents.v1')).find(r=>r.state.title.value==='Team notes').policy.enabled"), true);
   assert.deepEqual(runtimeErrors, []);
-  console.log('Browser checks passed: access inheritance, SVG labels, focus/Escape, folder uploads, private deletion keys, guest isolation, joined preview, offline editing/templates, light/dark/mobile.');
+  console.log('Browser checks passed: F8 Edit/Preview switching, Ctrl+F/Ctrl+P passthrough, access inheritance, SVG labels, focus/Escape, folder uploads, private deletion keys, guest isolation, joined preview, offline editing/templates, light/dark/mobile.');
 } finally {
   await cdp('Browser.close').catch(() => {}); browser.kill();
   await new Promise(resolve => server.close(resolve)); rmSync(temporary, { recursive: true, force: true });

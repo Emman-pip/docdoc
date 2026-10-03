@@ -97,6 +97,7 @@ Large transfers stream through `data/files/<session-id>/` on the bind mount. All
 - Enter your display name and select **Share document** to show a QR code, short invitation link, and code, such as `xyz-jnk-dvc`. Scan the QR code or copy the link/code; use the host’s LAN address instead of localhost when inviting another device. QR generation is bundled with DocDoc and works without an external service.
 - Open the invitation link, or select **Join with code** on the same LAN host and enter the code. Codes persist across host restarts; existing long invitation links still work.
 - Joined documents open in **Preview**, including when reopened from the sidebar. Select **Edit** to write. Locally created documents start in editing mode.
+- Press **F8** to switch between Edit and Preview. It works from the document editor and workspace controls while leaving browser shortcuts such as Print and Find available.
 - Anyone with the document invitation link or code can edit unless an enabled session whitelist blocks their connection. Keep invitations within your intended group.
 - The server rejects a sixth active user. Multiple tabs in one browser profile share a user identity and consume one place. Inactive places expire after 15 seconds; an upload in progress retains its place.
 - If the host disappears, continue editing the already-open page. Changes merge automatically when it returns.
